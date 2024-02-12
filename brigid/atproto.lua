@@ -6,6 +6,17 @@ local brigid = require "brigid"
 brigid.json.write = require "brigid.json.write"
 brigid.json.stringify = require "brigid.json.stringify"
 
+local percent_encode_table = {}
+
+for byte = 0x00, 0xFF do
+  percent_encode_table[string.char(byte)] = ("%%%02X"):format(byte)
+end
+
+local function percent_encode(s)
+  -- https://url.spec.whatwg.org/#application-x-www-form-urlencoded-percent-encode-set
+  return (s:gsub("[^%w%*%-%.%_]", percent_encode_table))
+end
+
 local class = {}
 local metatable = { __index = class, __name = "brigid.atproto" }
 
@@ -128,6 +139,46 @@ function class:delete_session()
   if code == 200 then
     self.session = nil
     os.remove(self:make_session_path(self.identifier))
+    return true
+  else
+    return nil, code
+  end
+end
+
+function class:get(endpoint, params)
+  if params then
+    local query = {}
+    for k, v in pairs(params) do
+      query[#query + 1] = percent_encode(tostring(k)).."="..percent_encode(tostring(v))
+    end
+    endpoint = endpoint.."?"..table.concat(query)
+  end
+  local code, data_writer = self:request(
+    "GET",
+    endpoint,
+    self:make_header { jwt = self.session.accessJwt })
+  if code == 200 then
+    return brigid.json.parse(data_writer)
+  else
+    return nil, code
+  end
+end
+
+function class:post(endpoint, json)
+  local header
+  local data
+
+  if json then
+    header = self:make_header { jwt = self.session.accessJwt, post_json = true }
+    data = brigid.json.stringify(json)
+  else
+    header = self:make_header { jwt = self.session.accessJwt }
+    data = ""
+  end
+
+  local code, data_writer = self:request("POST", endpoint, header, data)
+  if code == 200 then
+    return brigid.json.parse(data_writer)
   else
     return nil, code
   end

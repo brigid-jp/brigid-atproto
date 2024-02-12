@@ -17,10 +17,16 @@ if not atproto:load_session(IDENTIFIER) then
   assert(atproto:create_session(IDENTIFIER, PASSWORD))
 end
 
--- local handle = assert(io.open("tmp.json"))
--- local session = brigid.json.parse(handle:read "*a")
+assert(atproto:get("app.bsky.feed.getTimeline", { limit = 1 }))
+-- assert(atproto:post("com.atproto.repo.createRecord", {
+--   repo = IDENTIFIER;
+--   collection = "app.bsky.feed.post";
+--   record = {
+--     ["$type"] = "app.bsky.feed.post";
+--     text = "投稿てすと💕";
+--     createdAt = os.date("!%Y-%m-%dT%H:%M:%SZ");
+--   };
+-- }))
 
--- local session = atproto:create_session(IDENTIFIER, PASSWORD)
--- atproto.session = session
--- atproto:refresh_session()
-atproto:delete_session()
+-- assert(atproto:refresh_session())
+assert(atproto:delete_session())
