@@ -11,6 +11,23 @@ brigid.dlopen_self()
 
 local IDENTIFIER, PASSWORD = ...
 
+local text = "公式クライアントでURLじゃないリンクを張る方法がわからない。私は煙人計画🤖、URLリンクと違ってワンクッション入る。"
+local i, j = assert(text:find "煙人計画")
+local facets = {
+  {
+    index = {
+      byteStart = i - 1;
+      byteEnd = j;
+    };
+    features = {
+      {
+        ["$type"] = "app.bsky.richtext.facet#link";
+        uri = "https://vaporoid.com/";
+      };
+    };
+  };
+}
+
 local atproto <close> = brigid_atproto("https://bsky.social", "brigid-atproto/0.1")
 atproto.debug = true
 if not atproto:load_session(IDENTIFIER) then
@@ -18,13 +35,15 @@ if not atproto:load_session(IDENTIFIER) then
 end
 
 -- assert(atproto:get("app.bsky.feed.getTimeline", { limit = 1 }))
+
 assert(atproto:post("com.atproto.repo.createRecord", {
   repo = IDENTIFIER;
   collection = "app.bsky.feed.post";
   record = {
     ["$type"] = "app.bsky.feed.post";
-    text = "Lua🌙でBlueskyに投稿できるようになったので銭湯♨️行ってきます（このポストは🤖が投稿しています）💕💕💕";
+    text = text;
     createdAt = os.date("!%Y-%m-%dT%H:%M:%SZ");
+    facets = facets;
   };
 }))
 
