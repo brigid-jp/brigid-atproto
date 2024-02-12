@@ -17,16 +17,16 @@ if not atproto:load_session(IDENTIFIER) then
   assert(atproto:create_session(IDENTIFIER, PASSWORD))
 end
 
-assert(atproto:get("app.bsky.feed.getTimeline", { limit = 1 }))
--- assert(atproto:post("com.atproto.repo.createRecord", {
---   repo = IDENTIFIER;
---   collection = "app.bsky.feed.post";
---   record = {
---     ["$type"] = "app.bsky.feed.post";
---     text = "投稿てすと💕";
---     createdAt = os.date("!%Y-%m-%dT%H:%M:%SZ");
---   };
--- }))
+-- assert(atproto:get("app.bsky.feed.getTimeline", { limit = 1 }))
+assert(atproto:post("com.atproto.repo.createRecord", {
+  repo = IDENTIFIER;
+  collection = "app.bsky.feed.post";
+  record = {
+    ["$type"] = "app.bsky.feed.post";
+    text = "Lua🌙でBlueskyに投稿できるようになったので銭湯♨️行ってきます（このポストは🤖が投稿しています）💕💕💕";
+    createdAt = os.date("!%Y-%m-%dT%H:%M:%SZ");
+  };
+}))
 
 -- assert(atproto:refresh_session())
 assert(atproto:delete_session())
