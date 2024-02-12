@@ -5,11 +5,22 @@
 -- https://opensource.org/licenses/mit-license.php
 
 local brigid = require "brigid"
-local json_stringify = require "brigid.json.stringify"
--- local brigid = require "brigid"
--- brigid.atproto = require "brigid.atproto"
+local brigid_atproto = require "brigid.atproto"
 
-print(json_stringify {
-  42, "foo", {a={b=false}, x=brigid.null, z="日本\n語"}
-})
+brigid.dlopen_self()
 
+local IDENTIFIER, PASSWORD = ...
+
+local atproto <close> = brigid_atproto("https://bsky.social", "brigid-atproto/0.1")
+atproto.debug = true
+if not atproto:load_session(IDENTIFIER) then
+  assert(atproto:create_session(IDENTIFIER, PASSWORD))
+end
+
+-- local handle = assert(io.open("tmp.json"))
+-- local session = brigid.json.parse(handle:read "*a")
+
+-- local session = atproto:create_session(IDENTIFIER, PASSWORD)
+-- atproto.session = session
+-- atproto:refresh_session()
+atproto:delete_session()
