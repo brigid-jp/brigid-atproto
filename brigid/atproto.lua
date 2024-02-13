@@ -184,6 +184,18 @@ function class:post(endpoint, json)
   end
 end
 
+function class:post_blob(endpoint, content_type, data)
+  local header = self:make_header { jwt = self.session.accessJwt }
+  header["Content-Type"] = content_type
+
+  local code, data_writer = self:request("POST", endpoint, header, data)
+  if code == 200 then
+    return brigid.json.parse(data_writer)
+  else
+    return nil, code
+  end
+end
+
 function metatable:__close()
   self:close()
 end
