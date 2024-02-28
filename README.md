@@ -1,1 +1,1 @@
-# brigid-atproto
+# 環七文体
