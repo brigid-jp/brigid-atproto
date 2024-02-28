@@ -7,6 +7,11 @@
 local brigid = require "brigid"
 brigid.dlopen_self()
 
+
+
+
+
+
 local unpack = table.unpack or unpack
 
 local homedir = os.getenv "HOME"
