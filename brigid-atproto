@@ -5,9 +5,27 @@
 -- https://opensource.org/licenses/mit-license.php
 
 local brigid = require "brigid"
+brigid.dlopen_self()
+
+local unpack = table.unpack or unpack
+
+local homedir = os.getenv "HOME"
+local datadir = homedir.."/.brigid-atproto"
+
+
+local commands = {}
+
+-- https://atproto.com/specs/handle
+function commands.save_credentials(identifier, password)
+
+
+
+
+end
+
+os.exit()
 local brigid_atproto = require "brigid.atproto"
 
-brigid.dlopen_self()
 
 local IDENTIFIER, PASSWORD = ...
 
