@@ -66,7 +66,14 @@ end
 
 function class:debug(...)
   if self.config.debug then
-    print(...)
+    local out = io.stderr
+    for i, v in ipairs {...} do
+      if i > 1 then
+        out:write "\t"
+      end
+      out:write(tostring(v))
+    end
+    out:write "\n"
   end
 end
 
@@ -152,6 +159,33 @@ function commands:delete_session(name)
     Authorization = "Bearer "..session.refreshJwt;
   })))
   assert(r.code == 200)
+end
+
+----------------------------------------------------------------------
+
+function commands:get_profile(name, actor)
+  local session = assert(self:load_session(name))
+  if not actor then
+    actor = self.config.bsky.credentials[name].identifier
+  end
+
+  local url = brigid.data_writer()
+    :write(bsky_url)
+    :write "/app.bsky.actor.getProfile"
+    :write "?actor="
+    :write_urlencoded(actor)
+  local r = assert(self:request("GET", tostring(url), self:make_header({
+    Authorization = "Bearer "..session.accessJwt;
+  })))
+  assert(r.code == 200)
+
+  local r = assert(brigid.json.parse(r.data_writer))
+  io.write(([[
+did: %s
+handle: %s
+displayName: %s
+description: %s
+]]):format(r.did, r.handle, r.displayName, r.description))
 end
 
 ----------------------------------------------------------------------
