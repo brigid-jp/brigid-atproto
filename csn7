@@ -50,37 +50,6 @@ end
 
 ----------------------------------------------------------------------
 
---[[
-  Markdownの参考
-  Link
-    [text](link)
-    <link>
-
-  Mention
-    @...
-
-  tag
-    #...
-
-  replyとquoteはuri,cidが必要になる
-  例）
-  uri: at://did:plc:7zmnzvnstfywktheb565awdr/app.bsky.feed.post/3kmk62xwhyc2n
-  cid: bafyreie54to5mc6ufovfby6ykdsft6nixikopfcywcr6wh2atvbq7bckje
-  cidはバージョンみたいなもの？
-  rkey: 3kmk62xwhyc2n
-  rkeyからget_recordすればいいんじゃない？
-
-  embed
-    reply
-      !@rkey\n
-
-    quote
-      !>rkey\n
-
-    image
-      ![ALT](path)\n
-]]
-
 -- CommonMark
 --   https://spec.commonmark.org/
 -- GitHub Flavored Markdown
@@ -456,6 +425,26 @@ function commands:get_record(name, rkey)
 
   print(response.data_writer)
 end
+
+function commands:get_record(name, rkey)
+  local session = assert(self:load_session(name))
+
+  local url = brigid.data_writer()
+    :write(bsky_url)
+    :write "/com.atproto.repo.getRecord"
+    :write "?repo="
+    :write_urlencoded(self.config.bsky.credentials[name].identifier)
+    :write "&collection=app.bsky.feed.post"
+    :write "&rkey="
+    :write_urlencoded(rkey)
+  local response = assert(self:request("GET", tostring(url), self:make_header({
+    Authorization = "Bearer "..session.accessJwt;
+  })))
+  assert(response.code == 200)
+
+  print(response.data_writer)
+end
+
 
 ----------------------------------------------------------------------
 
