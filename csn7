@@ -47,6 +47,165 @@ end
 
 ----------------------------------------------------------------------
 
+--[[
+  参考URL
+    https://spec.commonmark.org/
+    https://github.github.com/gfm/
+    https://api.slack.com/reference/surfaces/formatting
+
+  長さが変わるのはリンクだけ。
+
+  link
+    [text](url)
+    <autolink>
+
+  mention
+    @...
+
+  tag
+    #...
+
+  replyとquoteはuri,cidが必要になる
+  例）
+  uri: at://did:plc:7zmnzvnstfywktheb565awdr/app.bsky.feed.post/3kmk62xwhyc2n
+  cid: bafyreie54to5mc6ufovfby6ykdsft6nixikopfcywcr6wh2atvbq7bckje
+  cidはバージョンみたいなもの？
+  rkey: 3kmk62xwhyc2n
+  rkeyからget_recordすればいいんじゃない？
+
+  embed
+    reply
+      !@rkey\n
+
+    quote
+      !>rkey\n
+
+    image
+      ![ALT](path)\n
+]]
+
+local function parse_text(source)
+  local reply
+  local quote
+  local images
+  local buffer = {}
+
+  for i, line in ipairs(source) do
+    local command, rkey = line:match "^!([@>])(.+)$"
+    if command == "@" then
+      reply = rkey
+    elseif command == ">" then
+      quote = rkey
+    else
+      local alt, path = line:match "^!%[(.-)%]%((.-)%)$"
+      if alt then
+        local image = {
+          alt = alt;
+          path = path;
+        }
+        if images then
+          images[#images + 1] = image
+        else
+          images = { image }
+        end
+      else
+        local p = 1
+        while true do
+          local i, j, text, command = line:find("(.-)([[<@#])", p)
+          if not i then
+            break
+          end
+          if text ~= "" then
+            buffer[#buffer + 1] = { text = text }
+          end
+          p = j + 1
+
+          if command == "[" then
+            -- [text](link)
+            local i, j, text, link = line:find("(.-)%]%((.-)%)", p)
+            if not i then
+              buffer[#buffer + 1] = { text = "[" }
+            else
+              if text == "" then
+                text = link
+              end
+              buffer[#buffer + 1] = {
+                type = "link";
+                text = text;
+                link = link;
+              }
+              p = j + 1
+            end
+          elseif command == "<" then
+            -- <link>
+            local i, j, link = line:find("(.-)>", p)
+            if not i then
+              buffer[#buffer + 1] = { text = "<" }
+            else
+              buffer[#buffer + 1] = {
+                type = "link";
+                text = "<"..link..">";
+                link = link;
+              }
+              p = j + 1
+            end
+          elseif command == "@" then
+            -- @mention
+            local i, j, mention = line:find("([^[<@#%s]+)", p)
+            if not i then
+              buffer[#buffer + 1] = { text = "@" }
+            else
+              buffer[#buffer + 1] = {
+                type = "mention";
+                text = "@"..mention;
+                mention = mention;
+              }
+              p = j + 1
+            end
+          elseif command == "#" then
+            local i, j, tag = line:find("([^[<@#%s]+)", p)
+            if not i then
+              buffer[#buffer + 1] = { text = "#" }
+            else
+              buffer[#buffer + 1] = {
+                type = "tag";
+                text = "#"..tag;
+                tag = tag;
+              }
+              p = j + 1
+            end
+          end
+        end
+        if p <= #line then
+          buffer[#buffer + 1] = { text = line:sub(p) }
+        end
+        buffer[#buffer + 1] = { text = "\n" }
+      end
+    end
+  end
+
+  for i = #buffer, 1, -1 do
+    local item = buffer[i]
+    if not item.type and item.text:find "^%s*$" then
+      buffer[i] = nil
+    else
+      break
+    end
+  end
+
+  -- local text = table.concat(buffer, "\n"):gsub("%s+$", "")
+  print(stringify_json {
+    reply = reply;
+    quote = quote;
+    images = images;
+    buffer = buffer;
+  })
+
+
+end
+
+----------------------------------------------------------------------
+
 local class = {}
 local metatable = { __index = class }
 
@@ -140,34 +299,36 @@ local commands = {}
 function commands:create_session(name)
   local cred = assert(self.config.bsky.credentials[name])
 
-  local r = assert(self:request("POST", bsky_url.."/com.atproto.server.createSession", self:make_header({
+  local response = assert(self:request("POST", bsky_url.."/com.atproto.server.createSession", self:make_header({
   }, media_types.json), stringify_json {
     identifier = cred.identifier;
     password = cred.password;
   }))
-  assert(r.code == 200)
+  assert(response.code == 200)
 
-  assert(self:save_session(name, r.data_writer))
+  self.session = brigid.json.parse(response.data_writer)
+  assert(self:save_session(name, response.data_writer))
 end
 
 function commands:refresh_session(name)
   local session = assert(self:load_session(name))
 
-  local r = assert(self:request("POST", bsky_url.."/com.atproto.server.refreshSession", self:make_header({
+  local response = assert(self:request("POST", bsky_url.."/com.atproto.server.refreshSession", self:make_header {
     Authorization = "Bearer "..session.refreshJwt;
-  })))
-  assert(r.code == 200)
+  }))
+  assert(response.code == 200)
 
-  assert(self:save_session(name, r.data_writer))
+  self.session = brigid.json.parse(response.data_writer)
+  assert(self:save_session(name, response.data_writer))
 end
 
 function commands:delete_session(name)
   local session = assert(self:load_session(name))
 
-  local r = assert(self:request("POST", bsky_url.."/com.atproto.server.deleteSession", self:make_header({
+  local response = assert(self:request("POST", bsky_url.."/com.atproto.server.deleteSession", self:make_header {
     Authorization = "Bearer "..session.refreshJwt;
-  })))
-  assert(r.code == 200)
+  }))
+  assert(response.code == 200)
 end
 
 ----------------------------------------------------------------------
@@ -183,18 +344,98 @@ function commands:get_profile(name, actor)
     :write "/app.bsky.actor.getProfile"
     :write "?actor="
     :write_urlencoded(actor)
-  local r = assert(self:request("GET", tostring(url), self:make_header({
+  local response = assert(self:request("GET", tostring(url), self:make_header({
     Authorization = "Bearer "..session.accessJwt;
   })))
-  assert(r.code == 200)
+  assert(response.code == 200)
 
-  local r = assert(brigid.json.parse(r.data_writer))
+  local r = assert(brigid.json.parse(response.data_writer))
   io.write(([[
 did: %s
 handle: %s
 displayName: %s
 description: %s
 ]]):format(r.did, r.handle, r.displayName, r.description))
+end
+
+function commands:get_author_feed(name, actor)
+  local session = assert(self:load_session(name))
+  if not actor then
+    actor = self.config.bsky.credentials[name].identifier
+  end
+
+  local url = brigid.data_writer()
+    :write(bsky_url)
+    :write "/app.bsky.feed.getAuthorFeed"
+    :write "?actor="
+    :write_urlencoded(actor)
+  local response = assert(self:request("GET", tostring(url), self:make_header({
+    Authorization = "Bearer "..session.accessJwt;
+  })))
+  assert(response.code == 200)
+
+  local r = assert(brigid.json.parse(response.data_writer))
+  for i, v in ipairs(r.feed) do
+    local record = v.post.record
+    io.write(([[
+post.cid: %s
+post.uri: %s
+createAt: %s
+%s
+]]):format(v.post.cid, v.post.uri, record.createdAt, record.text))
+  end
+end
+
+function commands:get_record(name, rkey)
+  local session = assert(self:load_session(name))
+
+  local url = brigid.data_writer()
+    :write(bsky_url)
+    :write "/com.atproto.repo.getRecord"
+    :write "?repo="
+    :write_urlencoded(self.config.bsky.credentials[name].identifier)
+    :write "&collection=app.bsky.feed.post"
+    :write "&rkey="
+    :write_urlencoded(rkey)
+  local response = assert(self:request("GET", tostring(url), self:make_header({
+    Authorization = "Bearer "..session.accessJwt;
+  })))
+  assert(response.code == 200)
+
+  print(response.data_writer)
+end
+
+----------------------------------------------------------------------
+
+function commands:create_record(name)
+  local session = assert(self:load_session(name))
+  local text = io.read "*a"
+
+  local record = {
+    ["$type"] = "app.bsky.feed.post";
+    text = text;
+    createdAt = os.date "!%Y-%m-%dT%H:%M:%SZ";
+  }
+
+  local response = assert(self:request("POST", bsky_url.."/com.atproto.repo.createRecord", self:make_header({
+    Authorization = "Bearer "..session.accessJwt;
+  }, media_types.json), stringify_json {
+    repo = self.config.bsky.credentials[name].identifier;
+    collection = "app.bsky.feed.post";
+    record = record;
+  }))
+  assert(response.code == 200)
+end
+
+----------------------------------------------------------------------
+
+function commands:parse_text(name)
+  -- local session = assert(self:load_session(name))
+  local lines = {}
+  for line in io.lines() do
+    lines[#lines + 1] = line
+  end
+  parse_text(lines)
 end
 
 ----------------------------------------------------------------------
