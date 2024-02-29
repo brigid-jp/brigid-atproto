@@ -17,6 +17,9 @@ local media_types = {
   urlencoded = "application/x-www-form-urlencoded";
 }
 
+local bsky_url = "https://bsky.social/xrpc"
+local slack_url = "https://slack.com/api"
+
 ----------------------------------------------------------------------
 
 local function read_contents(path)
@@ -98,24 +101,79 @@ function class:request(method, url, header, data)
   return self.response
 end
 
+function class:get_session_path(name)
+  return self.config.data_dirpath.."/session-"..name..".json"
+end
+
+function class:save_session(name, data)
+  local writer, message = brigid.file_writer(self:get_session_path(name))
+  if not writer then
+    return writer, message
+  end
+  return writer:write(data):close()
+end
+
+function class:load_session(name)
+  return read_json(self:get_session_path(name))
+end
+
 ----------------------------------------------------------------------
 
 local commands = {}
 
 function commands:create_session(name)
   local cred = assert(self.config.bsky.credentials[name])
+
+  local r = assert(self:request("POST", bsky_url.."/com.atproto.server.createSession", self:make_header({
+  }, media_types.json), stringify_json {
+    identifier = cred.identifier;
+    password = cred.password;
+  }))
+  assert(r.code == 200)
+
+  assert(self:save_session(name, r.data_writer))
 end
+
+function commands:refresh_session(name)
+  local session = assert(self:load_session(name))
+
+  local r = assert(self:request("POST", bsky_url.."/com.atproto.server.refreshSession", self:make_header({
+    Authorization = "Bearer "..session.refreshJwt;
+  })))
+  assert(r.code == 200)
+
+  assert(self:save_session(name, r.data_writer))
+end
+
+function commands:delete_session(name)
+  local session = assert(self:load_session(name))
+
+  local r = assert(self:request("POST", bsky_url.."/com.atproto.server.deleteSession", self:make_header({
+    Authorization = "Bearer "..session.refreshJwt;
+  })))
+  assert(r.code == 200)
+end
+
+----------------------------------------------------------------------
 
 function commands:slack(name, channel, username, iconname)
   local app = assert(self.config.slack.apps[name])
   local text = io.read "*a"
 
-  assert(self:request("POST", "https://slack.com/api/chat.postMessage", self:make_header({
+  assert(self:request("POST", slack_url.."/chat.postMessage", self:make_header({
     Authorization = "Bearer "..app.oauth_token;
   }, media_types.json), stringify_json {
     token = app.oauth_token;
     channel = assert(channel);
-    text = text;
+    blocks = {
+      {
+        type = "section";
+        text = {
+          type = "mrkdwn";
+          text = text;
+        };
+      };
+    };
     username = username;
     icon_url = self.config.icons[iconname];
   }))
