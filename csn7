@@ -7,9 +7,143 @@
 local brigid = require "brigid"
 brigid.dlopen_self()
 
+local unpack = table.unpack or unpack
 
+----------------------------------------------------------------------
 
+-- https://www.iana.org/assignments/media-types/media-types.xhtml
+local media_types = {
+  json = "application/json";
+  urlencoded = "application/x-www-form-urlencoded";
+}
 
+----------------------------------------------------------------------
+
+local function read_contents(path)
+  local handle, message = io.open(path, "rb")
+  if not handle then
+    return handle, message
+  end
+
+  local contents = handle:read "*a"
+  handle:close()
+  return contents
+end
+
+local function read_json(path)
+  local result , message = read_contents(path)
+  if not result then
+    return result, message
+  end
+  return brigid.json.parse(result)
+end
+
+local function stringify_json(data)
+  return tostring(brigid.data_writer():write_json(data))
+end
+
+----------------------------------------------------------------------
+
+local class = {}
+local metatable = { __index = class }
+
+function class.new(config)
+  local self = setmetatable({ config = config }, metatable)
+  self.http_session = brigid.http_session {
+    header = function (code, header)
+      self.response.code = code
+      self.response.header = header
+    end;
+    write = function (out)
+      self.response.data_writer:write(out)
+    end;
+  }
+  return self
+end
+
+function class:debug(...)
+  if self.config.debug then
+    print(...)
+  end
+end
+
+function class:make_header(source, content_type)
+  local result = {
+    ["User-Agent"] = self.config.ua;
+    ["Content-Type"] = content_type;
+  }
+  for k, v in pairs(source) do
+    result[k] = v
+  end
+  return result
+end
+
+function class:request(method, url, header, data)
+  self.response = { data_writer = brigid.data_writer() }
+
+  local result, message = self.http_session:request {
+    method = method;
+    url = url;
+    header = header;
+    data = data;
+  }
+  if not result then
+    return result, message
+  end
+
+  if self.config.debug then
+    self:debug(stringify_json(self.response))
+  end
+
+  return self.response
+end
+
+----------------------------------------------------------------------
+
+local commands = {}
+
+function commands:create_session(name)
+  local cred = assert(self.config.bsky.credentials[name])
+end
+
+function commands:slack(name, channel, username, iconname)
+  local app = assert(self.config.slack.apps[name])
+  local text = io.read "*a"
+
+  assert(self:request("POST", "https://slack.com/api/chat.postMessage", self:make_header({
+    Authorization = "Bearer "..app.oauth_token;
+  }, media_types.json), stringify_json {
+    token = app.oauth_token;
+    channel = assert(channel);
+    text = text;
+    username = username;
+    icon_url = self.config.icons[iconname];
+  }))
+end
+
+----------------------------------------------------------------------
+
+local home = os.getenv "HOME"
+if not home then
+  -- Windowsの場合
+  home = assert(os.getenv "HOMEDRIVE")..assert(os.getenv "HOMEPATH")
+end
+local config_path = home.."/.csn7rc"
+local config = read_json(config_path) or {}
+
+if not config.data_dirpath then
+  config.data_dirpath = home.."/.csn7"
+end
+brigid.mkdir(config.data_dirpath)
+
+local self = class.new(config)
+
+----------------------------------------------------------------------
+
+local command = assert(commands[arg[1]])
+command(self, unpack(arg, 2))
+
+--[[
 
 
 local unpack = table.unpack or unpack
@@ -28,7 +162,9 @@ function commands.save_credentials(identifier, password)
 
 end
 
-os.exit()
+
+
+
 local brigid_atproto = require "brigid.atproto"
 
 
@@ -105,3 +241,4 @@ assert(atproto:post("com.atproto.repo.createRecord", {
 
 -- assert(atproto:refresh_session())
 assert(atproto:delete_session())
+]]
