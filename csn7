@@ -15,6 +15,9 @@ local unpack = table.unpack or unpack
 local media_types = {
   json = "application/json";
   urlencoded = "application/x-www-form-urlencoded";
+  jpeg = "image/jpeg";
+  png = "image/png";
+  webp = "image/webp";
 }
 
 local bsky_url = "https://bsky.social/xrpc"
@@ -48,18 +51,12 @@ end
 ----------------------------------------------------------------------
 
 --[[
-  参考URL
-    https://spec.commonmark.org/
-    https://github.github.com/gfm/
-    https://api.slack.com/reference/surfaces/formatting
+  Markdownの参考
+  Link
+    [text](link)
+    <link>
 
-  長さが変わるのはリンクだけ。
-
-  link
-    [text](url)
-    <autolink>
-
-  mention
+  Mention
     @...
 
   tag
@@ -84,6 +81,15 @@ end
       ![ALT](path)\n
 ]]
 
+-- CommonMark
+--   https://spec.commonmark.org/
+-- GitHub Flavored Markdown
+--   https://github.github.com/gfm/
+-- Slack
+--   https://api.slack.com/reference/surfaces/formatting
+
+-- https://atproto.com/specs/record-key
+
 local function parse_text(source)
   local reply
   local quote
@@ -91,117 +97,163 @@ local function parse_text(source)
   local buffer = {}
 
   for i, line in ipairs(source) do
-    local command, rkey = line:match "^!([@>])(.+)$"
-    if command == "@" then
-      reply = rkey
-    elseif command == ">" then
-      quote = rkey
-    else
-      local alt, path = line:match "^!%[(.-)%]%((.-)%)$"
-      if alt then
-        local image = {
-          alt = alt;
-          path = path;
-        }
-        if images then
-          images[#images + 1] = image
-        else
-          images = { image }
-        end
-      else
-        local p = 1
-        while true do
-          local i, j, text, command = line:find("(.-)([[<@#])", p)
-          if not i then
-            break
+    local processed
+    local command, tail = line:match "^!([@>[])(.+)$"
+    if i then
+      if command == "[" then
+        -- ![text](path)
+        local text, path = tail:match "([^%]]*)%]%(([^)]+)%)$"
+        if text then
+          local image = {
+            text = text;
+            path = path;
+          }
+          if images then
+            images[#images + 1] = image
+          else
+            images = { image }
           end
-          if text ~= "" then
-            buffer[#buffer + 1] = { text = text }
-          end
-          p = j + 1
-
-          if command == "[" then
-            -- [text](link)
-            local i, j, text, link = line:find("(.-)%]%((.-)%)", p)
-            if not i then
-              buffer[#buffer + 1] = { text = "[" }
-            else
-              if text == "" then
-                text = link
-              end
-              buffer[#buffer + 1] = {
-                type = "link";
-                text = text;
-                link = link;
-              }
-              p = j + 1
-            end
-          elseif command == "<" then
-            -- <link>
-            local i, j, link = line:find("(.-)>", p)
-            if not i then
-              buffer[#buffer + 1] = { text = "<" }
-            else
-              buffer[#buffer + 1] = {
-                type = "link";
-                text = "<"..link..">";
-                link = link;
-              }
-              p = j + 1
-            end
-          elseif command == "@" then
-            -- @mention
-            local i, j, mention = line:find("([^[<@#%s]+)", p)
-            if not i then
-              buffer[#buffer + 1] = { text = "@" }
-            else
-              buffer[#buffer + 1] = {
-                type = "mention";
-                text = "@"..mention;
-                mention = mention;
-              }
-              p = j + 1
-            end
-          elseif command == "#" then
-            local i, j, tag = line:find("([^[<@#%s]+)", p)
-            if not i then
-              buffer[#buffer + 1] = { text = "#" }
-            else
-              buffer[#buffer + 1] = {
-                type = "tag";
-                text = "#"..tag;
-                tag = tag;
-              }
-              p = j + 1
-            end
-          end
+          processed = true
         end
-        if p <= #line then
-          buffer[#buffer + 1] = { text = line:sub(p) }
+      elseif command == "@" then
+        -- !@rkey
+        local rkey = tail:match "^[2-7a-z]+$"
+        if rkey then
+          reply = { rkey = rkey }
+          processed = true
         end
-        buffer[#buffer + 1] = { text = "\n" }
+      elseif command == ">" then
+        -- !>rkey
+        local rkey = tail:match "^[2-7a-z]+$"
+        if rkey then
+          quote = { rkey = rkey }
+          processed = true
+        end
       end
+    end
+
+    if not processed then
+      local p = 1
+      while true do
+        local i, j, text, command = line:find("^(.-)([[<@#])", p)
+        if not i then
+          break
+        end
+        if text ~= "" then
+          buffer[#buffer + 1] = { text = text }
+        end
+        p = j + 1
+
+        if command == "[" then
+          -- [text](link)
+          local i, j, text, link = line:find("^(.-)%]%((.-)%)", p)
+          if i then
+            if text == "" then
+              text = link
+            end
+            buffer[#buffer + 1] = {
+              text = text;
+              feature = {
+                ["$type"] = "app.bsky.richtext.facet#link";
+                uri = link;
+              };
+            }
+            p = j + 1
+          else
+            buffer[#buffer + 1] = { text = "[" }
+          end
+        elseif command == "<" then
+          -- <link>
+          local i, j, link = line:find("^(.-)>", p)
+          if i then
+            buffer[#buffer + 1] = {
+              text = link;
+              feature = {
+                ["$type"] = "app.bsky.richtext.facet#link";
+                uri = link;
+              };
+            }
+            p = j + 1
+          else
+            buffer[#buffer + 1] = { text = "<" }
+          end
+        elseif command == "@" then
+          -- @mention
+          local i, j, mention = line:find("^([^[<@#%s]+)", p)
+          if i then
+            buffer[#buffer + 1] = {
+              text = "@"..mention;
+              feature = {
+                ["$type"] = "app.bsky.richtext.facet#mention";
+                did = mention;
+              };
+            }
+            p = j + 1
+          else
+            buffer[#buffer + 1] = { text = "@" }
+          end
+        elseif command == "#" then
+          -- #tag
+          local i, j, tag = line:find("^([^[<@#%s]+)", p)
+          if i then
+            buffer[#buffer + 1] = {
+              text = "#"..tag;
+              feature = {
+                ["$type"] = "app.bsky.richtext.facet#tag";
+                tag = tag;
+              };
+            }
+            p = j + 1
+          else
+            buffer[#buffer + 1] = { text = "#" }
+          end
+        end
+      end
+
+      if p <= #line then
+        buffer[#buffer + 1] = { text = line:sub(p) }
+      end
+      buffer[#buffer + 1] = { text = "\n" }
     end
   end
 
   for i = #buffer, 1, -1 do
-    local item = buffer[i]
-    if not item.type and item.text:find "^%s*$" then
+    local v = buffer[i]
+    if not v.feature and v.text:find "^%s*$" then
       buffer[i] = nil
     else
       break
     end
   end
 
-  -- local text = table.concat(buffer, "\n"):gsub("%s+$", "")
-  print(stringify_json {
+  local data_writer = brigid.data_writer()
+  local facets
+  for i, v in ipairs(buffer) do
+    if v.feature then
+      local n = #data_writer
+      local facet = {
+        index = {
+          byteStart = n;
+          byteEnd = n + #v.text;
+        };
+        features = { v.feature };
+      }
+      if facets then
+        facets[#facets + 1] = facet
+      else
+        facets = { facet }
+      end
+    end
+    data_writer:write(v.text)
+  end
+
+  return {
     reply = reply;
     quote = quote;
     images = images;
-    buffer = buffer;
-  })
-
-
+    text = data_writer;
+    facets = facets;
+  }
 end
 
 ----------------------------------------------------------------------
@@ -435,7 +487,7 @@ function commands:parse_text(name)
   for line in io.lines() do
     lines[#lines + 1] = line
   end
-  parse_text(lines)
+  print(stringify_json(parse_text(lines)))
 end
 
 ----------------------------------------------------------------------
@@ -485,102 +537,3 @@ local self = class.new(config)
 local command = assert(commands[arg[1]])
 command(self, unpack(arg, 2))
 
---[[
-
-
-local unpack = table.unpack or unpack
-
-local homedir = os.getenv "HOME"
-local datadir = homedir.."/.brigid-atproto"
-
-
-local commands = {}
-
--- https://atproto.com/specs/handle
-function commands.save_credentials(identifier, password)
-
-
-
-
-end
-
-
-
-
-local brigid_atproto = require "brigid.atproto"
-
-
-local IDENTIFIER, PASSWORD = ...
-
-local text = "空き家からもれだして、暗渠を侵食する木々。用賀中学校の北西の交差点、矢沢川は丁字に合流する。流れはいつか、等々力渓谷に至る。"
-
--- local text = "公式クライアントでURLじゃないリンクを張る方法がわからない。私は煙人計画🤖、URLリンクと違ってワンクッション入る。"
--- local i, j = assert(text:find "煙人計画")
--- local facets = {
---   {
---     index = {
---       byteStart = i - 1;
---       byteEnd = j;
---     };
---     features = {
---       {
---         ["$type"] = "app.bsky.richtext.facet#link";
---         uri = "https://vaporoid.com/";
---       };
---     };
---   };
--- }
-
-local function load_blob(path)
-  local handle = assert(io.open(path, "rb"))
-  local data = handle:read "*a"
-  handle:close()
-  return data
-end
-
-local photo_path = "/Users/moyu/Desktop/photo.jpg"
-local map_path = "/Users/moyu/Desktop/map.jpg"
-
-local photo_data = load_blob(photo_path)
-local map_data = load_blob(map_path)
-
-print(#photo_data)
-print(#map_data)
-
-local atproto <close> = brigid_atproto("https://bsky.social", "brigid-atproto/0.1")
-atproto.debug = true
-if not atproto:load_session(IDENTIFIER) then
-  assert(atproto:create_session(IDENTIFIER, PASSWORD))
-end
-
--- assert(atproto:get("app.bsky.feed.getTimeline", { limit = 1 }))
-
-local photo = assert(atproto:post_blob("com.atproto.repo.uploadBlob", "image/jpeg", photo_data))
-local map = assert(atproto:post_blob("com.atproto.repo.uploadBlob", "image/jpeg", map_data))
-
-assert(atproto:post("com.atproto.repo.createRecord", {
-  repo = IDENTIFIER;
-  collection = "app.bsky.feed.post";
-  record = {
-    ["$type"] = "app.bsky.feed.post";
-    text = text;
-    createdAt = os.date("!%Y-%m-%dT%H:%M:%SZ");
-    embed = {
-      ["$type"] = "app.bsky.embed.images";
-      images = {
-        {
-          alt = "空き家からもれだして、暗渠を侵食する木々。";
-          image = photo.blob;
-        };
-        {
-          alt = "用賀中学校の北西の交差点、矢沢川は丁字に合流する。";
-          image = map.blob;
-        };
-      };
-    };
-  };
-}))
-
--- assert(atproto:refresh_session())
-assert(atproto:delete_session())
-]]
