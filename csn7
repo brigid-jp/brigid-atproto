@@ -50,15 +50,7 @@ end
 
 ----------------------------------------------------------------------
 
--- CommonMark
---   https://spec.commonmark.org/
--- GitHub Flavored Markdown
---   https://github.github.com/gfm/
--- Slack
---   https://api.slack.com/reference/surfaces/formatting
-
--- https://atproto.com/specs/record-key
-
+--[=[
 local function parse_text(source)
   local reply
   local quote
@@ -85,17 +77,23 @@ local function parse_text(source)
           processed = true
         end
       elseif command == "@" then
-        -- !@rkey
-        local rkey = tail:match "^[2-7a-z]+$"
-        if rkey then
-          reply = { rkey = rkey }
+        -- !@repo/rkey
+        local repo, rkey = tail:match "([0-9A-Za-z%-]+%.bsky%.social).*/([2-7a-z]+)$"
+        if repo then
+          reply = {
+            repo = repo;
+            rkey = rkey;
+          }
           processed = true
         end
       elseif command == ">" then
-        -- !>rkey
-        local rkey = tail:match "^[2-7a-z]+$"
-        if rkey then
-          quote = { rkey = rkey }
+        -- !>repo/rkey
+        local repo, rkey = tail:match "([0-9A-Za-z%-]+%.bsky%.social).*/([2-7a-z]+)$"
+        if repo then
+          quote = {
+            repo = repo;
+            rkey = rkey;
+          }
           processed = true
         end
       end
@@ -224,6 +222,7 @@ local function parse_text(source)
     facets = facets;
   }
 end
+]=]
 
 ----------------------------------------------------------------------
 
@@ -264,6 +263,10 @@ function class:debug(...)
     end
     out:write "\n"
   end
+end
+
+function class:warn(...)
+  io.stderr:write(table.concat({...}, "\t"), "\n")
 end
 
 function class:make_header(source, content_type)
@@ -310,7 +313,248 @@ function class:save_session(name, data)
 end
 
 function class:load_session(name)
-  return read_json(self:get_session_path(name))
+  local session, message = read_json(self:get_session_path(name))
+  if not session then
+    return session, message
+  end
+  self.session = session
+  return session
+end
+
+----------------------------------------------------------------------
+
+function class:get_record(repo, rkey)
+  local url = brigid.data_writer()
+    :write(bsky_url)
+    :write "/com.atproto.repo.getRecord"
+    :write "?repo="
+    :write_urlencoded(repo)
+    :write "&collection=app.bsky.feed.post"
+    :write "&rkey="
+    :write_urlencoded(rkey)
+  local response, message = self:request("GET", tostring(url), self:make_header({
+    Authorization = "Bearer "..self.session.accessJwt;
+  }))
+  if not response then
+    return response, message
+  end
+  local result, message = brigid.json.parse(response.data_writer)
+  if not result then
+    return result, message
+  end
+  if response.code ~= 200 then
+    return nil, result.error..": "..result.message
+  end
+  return result
+end
+
+----------------------------------------------------------------------
+
+-- CommonMark
+--   https://spec.commonmark.org/
+-- GitHub Flavored Markdown
+--   https://github.github.com/gfm/
+-- Slack
+--   https://api.slack.com/reference/surfaces/formatting
+
+-- https://atproto.com/specs/handle
+-- https://atproto.com/specs/record-key
+
+
+function class:parse_text(source)
+  local reply
+  local quote
+  local images
+  local buffer = {}
+
+  for i, line in ipairs(source) do
+    local processed
+    local command, tail = line:match "^!([@>[])(.+)$"
+    if i then
+      if command == "[" then
+        -- ![text](path)
+        local text, path = tail:match "([^%]]*)%]%(([^)]+)%)$"
+        if text then
+          local image = {
+            text = text;
+            path = path;
+          }
+          if images then
+            images[#images + 1] = image
+          else
+            images = { image }
+          end
+          processed = true
+        end
+      elseif command == "@" then
+        -- !@repo/rkey
+        local repo, rkey = tail:match "([0-9A-Za-z%-]+%.bsky%.social).*/([2-7a-z]+)$"
+        if repo then
+          local record, message = self:get_record(repo, rkey)
+          if record then
+            reply = {
+              parent = {
+                uri = record.uri;
+                cid = record.cid;
+              };
+            }
+            if record.value.reply then
+              reply.root = record.value.reply.root
+            else
+              reply.root = reply.parent
+            end
+            processed = true
+          else
+            self:warn("cannot get_record: "..message)
+          end
+        end
+      elseif command == ">" then
+        -- !>repo/rkey
+        local repo, rkey = tail:match "([0-9A-Za-z%-]+%.bsky%.social).*/([2-7a-z]+)$"
+        if repo then
+          local record, message = self:get_record(repo, rkey)
+          if record then
+            quote = {
+              uri = record.uri;
+              cid = record.cid;
+            }
+            processed = true
+          else
+            self:warn("cannot get_record: "..message)
+          end
+        end
+      end
+    end
+
+    if not processed then
+      local p = 1
+      while true do
+        local i, j, text, command = line:find("^(.-)([[<@#])", p)
+        if not i then
+          break
+        end
+        if text ~= "" then
+          buffer[#buffer + 1] = { text = text }
+        end
+        p = j + 1
+
+        if command == "[" then
+          -- [text](link)
+          local i, j, text, link = line:find("^(.-)%]%((.-)%)", p)
+          if i then
+            if text == "" then
+              text = link
+            end
+            buffer[#buffer + 1] = {
+              text = text;
+              feature = {
+                ["$type"] = "app.bsky.richtext.facet#link";
+                uri = link;
+              };
+            }
+            p = j + 1
+          else
+            buffer[#buffer + 1] = { text = "[" }
+          end
+        elseif command == "<" then
+          -- <link>
+          local i, j, link = line:find("^(.-)>", p)
+          if i then
+            buffer[#buffer + 1] = {
+              text = link;
+              feature = {
+                ["$type"] = "app.bsky.richtext.facet#link";
+                uri = link;
+              };
+            }
+            p = j + 1
+          else
+            buffer[#buffer + 1] = { text = "<" }
+          end
+        elseif command == "@" then
+          -- @mention
+          local i, j, mention = line:find("^([^[<@#%s]+)", p)
+          if i then
+            buffer[#buffer + 1] = {
+              text = "@"..mention;
+              feature = {
+                ["$type"] = "app.bsky.richtext.facet#mention";
+                did = mention;
+              };
+            }
+            p = j + 1
+          else
+            buffer[#buffer + 1] = { text = "@" }
+          end
+        elseif command == "#" then
+          -- #tag
+          local i, j, tag = line:find("^([^[<@#%s]+)", p)
+          if i then
+            buffer[#buffer + 1] = {
+              text = "#"..tag;
+              feature = {
+                ["$type"] = "app.bsky.richtext.facet#tag";
+                tag = tag;
+              };
+            }
+            p = j + 1
+          else
+            buffer[#buffer + 1] = { text = "#" }
+          end
+        end
+      end
+
+      if p <= #line then
+        buffer[#buffer + 1] = { text = line:sub(p) }
+      end
+      buffer[#buffer + 1] = { text = "\n" }
+    end
+  end
+
+  for i = #buffer, 1, -1 do
+    local v = buffer[i]
+    if not v.feature and v.text:find "^%s*$" then
+      buffer[i] = nil
+    else
+      break
+    end
+  end
+
+  local data_writer = brigid.data_writer()
+  local facets
+  local trim = true
+  for i, v in ipairs(buffer) do
+    if v.feature then
+      local n = #data_writer
+      local facet = {
+        index = {
+          byteStart = n;
+          byteEnd = n + #v.text;
+        };
+        features = { v.feature };
+      }
+      if facets then
+        facets[#facets + 1] = facet
+      else
+        facets = { facet }
+      end
+      data_writer:write(v.text)
+      trim = false
+    else
+      if not trim or not v.text:find "^%s*$" then
+        data_writer:write(v.text)
+        trim = false
+      end
+    end
+  end
+
+  return {
+    reply = reply;
+    quote = quote;
+    images = images;
+    text = data_writer;
+    facets = facets;
+  }
 end
 
 ----------------------------------------------------------------------
@@ -407,44 +651,14 @@ createAt: %s
   end
 end
 
-function commands:get_record(name, rkey)
-  local session = assert(self:load_session(name))
-
-  local url = brigid.data_writer()
-    :write(bsky_url)
-    :write "/com.atproto.repo.getRecord"
-    :write "?repo="
-    :write_urlencoded(self.config.bsky.credentials[name].identifier)
-    :write "&collection=app.bsky.feed.post"
-    :write "&rkey="
-    :write_urlencoded(rkey)
-  local response = assert(self:request("GET", tostring(url), self:make_header({
-    Authorization = "Bearer "..session.accessJwt;
-  })))
-  assert(response.code == 200)
-
-  print(response.data_writer)
+function commands:get_record(name, rkey, repo)
+  assert(self:load_session(name))
+  if not repo then
+    repo = self.config.bsky.credentials[name].identifier
+  end
+  local record = assert(self:get_record(repo, rkey))
+  print(stringify_json(record))
 end
-
-function commands:get_record(name, rkey)
-  local session = assert(self:load_session(name))
-
-  local url = brigid.data_writer()
-    :write(bsky_url)
-    :write "/com.atproto.repo.getRecord"
-    :write "?repo="
-    :write_urlencoded(self.config.bsky.credentials[name].identifier)
-    :write "&collection=app.bsky.feed.post"
-    :write "&rkey="
-    :write_urlencoded(rkey)
-  local response = assert(self:request("GET", tostring(url), self:make_header({
-    Authorization = "Bearer "..session.accessJwt;
-  })))
-  assert(response.code == 200)
-
-  print(response.data_writer)
-end
-
 
 ----------------------------------------------------------------------
 
@@ -471,12 +685,12 @@ end
 ----------------------------------------------------------------------
 
 function commands:parse_text(name)
-  -- local session = assert(self:load_session(name))
+  assert(self:load_session(name))
   local lines = {}
   for line in io.lines() do
     lines[#lines + 1] = line
   end
-  print(stringify_json(parse_text(lines)))
+  print(stringify_json(self:parse_text(lines)))
 end
 
 ----------------------------------------------------------------------
