@@ -374,7 +374,7 @@ end
 -- https://atproto.com/specs/handle
 -- https://atproto.com/specs/record-key
 
-function class:make_message(source)
+function class:make_record(source)
   local reply
   local quote
   local images
@@ -596,7 +596,7 @@ function class:make_message(source)
         record = quote;
       }
     end
-  else
+  elseif images then
     record.embed = {
       ["$type"] = "app.bsky.embed.images";
       images = images;
@@ -683,7 +683,7 @@ end
 function commands:create_record(name)
   local session = assert(self:load_session(name))
   local lines = read_lines(io.stdin)
-  local record, images = assert(self:make_message(lines))
+  local record, images = assert(self:make_record(lines))
 
   if images then
     for i, image in ipairs(images) do
@@ -707,10 +707,10 @@ end
 
 ----------------------------------------------------------------------
 
-function commands:make_message(name)
+function commands:make_record(name)
   assert(self:load_session(name))
   local lines = read_lines(io.stdin)
-  print(stringify_json(self:make_message(lines)))
+  print(stringify_json(self:make_record(lines)))
 end
 
 ----------------------------------------------------------------------
