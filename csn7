@@ -736,6 +736,8 @@ function commands:make_record(name)
   end
 
   io.write(stringify_json(r), "\n")
+  io.stderr:write(tostring(r.text), "\n")
+  io.stderr:write(("-"):rep(70), "\n")
   io.stderr:write(("文字数:    %8d (%s)\n"):format(char_count, char_count <= 300 and "OK" or "NG"))
   io.stderr:write(("画像サイズ:%8d (%s)\n"):format(image_size, image_size <= 1000000 and "OK" or "NG"))
 end
