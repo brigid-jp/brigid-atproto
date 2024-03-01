@@ -120,7 +120,11 @@ function class:request(method, url, header, data)
     self:debug "[request]"
     self:debug(method, url)
     self:debug(stringify_json(header))
-    self:debug(tostring(data))
+
+    local content_type = header["Content-Type"]
+    if content_type and not content_type:find "image/" then
+      self:debug(tostring(data))
+    end
   end
 
   local result, message = self.http_session:request {
@@ -166,7 +170,6 @@ end
 
 ----------------------------------------------------------------------
 
--- authzはnil, refresh, access/trueのどれか
 function class:post(endpoint, authz, content_type, data, refreshed)
   local authorization
   if authz == "access" then
@@ -229,43 +232,6 @@ function class:post(endpoint, authz, content_type, data, refreshed)
   return result
 end
 
-function class:create_session(name, identifier, password)
-  local session, message = self:post("com.atproto.server.createSession", nil, media_types.json, stringify_json {
-    identifier = identifier;
-    password = password;
-  })
-  if not session then
-    return session, message
-  end
-  session.name = name
-  self.session = session
-  local result, message = self:save_session(name, stringify_json(session))
-  if not result then
-    return result, message
-  end
-  return session, message
-end
-
-function class:refresh_session(name)
-  local session, message = self:post("com.atproto.server.refreshSession", "refresh")
-  if not session then
-    return session, message
-  end
-  session.name = name
-  self.session = session
-  local result, message = self:save_session(name, stringify_json(session))
-  if not result then
-    return result, message
-  end
-  return session, message
-end
-
-function class:delete_session(name)
-  return self:post("com.atproto.server.deleteSession", "refresh")
-end
-
-----------------------------------------------------------------------
-
 function class:get_impl(url, refreshed)
   local response = assert(self:request("GET", url, self:make_header {
     Authorization = "Bearer "..self.session.accessJwt;
@@ -327,35 +293,58 @@ function class:get(endpoint, params)
   return self:get_impl(tostring(data_writer))
 end
 
+----------------------------------------------------------------------
+
+function class:create_session(name, identifier, password)
+  local session, message = self:post("com.atproto.server.createSession", nil, media_types.json, stringify_json {
+    identifier = identifier;
+    password = password;
+  })
+  if not session then
+    return session, message
+  end
+  session.name = name
+  self.session = session
+  local result, message = self:save_session(name, stringify_json(session))
+  if not result then
+    return result, message
+  end
+  return session, message
+end
+
+function class:refresh_session(name)
+  local session, message = self:post("com.atproto.server.refreshSession", "refresh")
+  if not session then
+    return session, message
+  end
+  session.name = name
+  self.session = session
+  local result, message = self:save_session(name, stringify_json(session))
+  if not result then
+    return result, message
+  end
+  return session, message
+end
+
+function class:delete_session(name)
+  return self:post("com.atproto.server.deleteSession", "refresh")
+end
+
+----------------------------------------------------------------------
+
+function class:get_record(repo, rkey)
+  return self:get("com.atproto.repo.getRecord", {
+    repo = repo;
+    collection = "app.bsky.feed.post";
+    rkey = rkey;
+  })
+end
+
 function class:get_profile(actor)
   return self:get("app.bsky.actor.getProfile", { actor = actor })
 end
 
-function class:get_record(repo, rkey)
-  local url = brigid.data_writer()
-    :write(bsky_url)
-    :write "/com.atproto.repo.getRecord"
-    :write "?repo="
-    :write_urlencoded(repo)
-    :write "&collection=app.bsky.feed.post"
-    :write "&rkey="
-    :write_urlencoded(rkey)
-  local response, message = self:request("GET", tostring(url), self:make_header({
-    Authorization = "Bearer "..self.session.accessJwt;
-  }))
-  if not response then
-    return response, message
-  end
-  local result, message = brigid.json.parse(response.data_writer)
-  if not result then
-    return result, message
-  end
-  if response.code ~= 200 then
-    return nil, result.error..": "..result.message
-  end
-  return result
-end
-
+-- TODO fixme
 function class:upload_blob(content_type, data)
   local response, message = self:request("POST", bsky_url.."/com.atproto.repo.uploadBlob", self:make_header({
     Authorization = "Bearer "..self.session.accessJwt;
@@ -385,7 +374,7 @@ end
 -- https://atproto.com/specs/handle
 -- https://atproto.com/specs/record-key
 
-function class:parse_text(source)
+function class:make_message(source)
   local reply
   local quote
   local images
@@ -400,7 +389,7 @@ function class:parse_text(source)
         local text, path = tail:match "([^%]]*)%]%(([^)]+)%)$"
         if text then
           local image = {
-            text = text;
+            alt = text;
             path = path;
           }
           if images then
@@ -499,13 +488,20 @@ function class:parse_text(source)
           -- @mention
           local i, j, mention = line:find("^([^[<@#%s]+)", p)
           if i then
-            buffer[#buffer + 1] = {
-              text = "@"..mention;
-              feature = {
-                ["$type"] = "app.bsky.richtext.facet#mention";
-                did = mention;
-              };
-            }
+            local profile, message = self:get_profile(mention)
+            if profile then
+              buffer[#buffer + 1] = {
+                text = "@"..mention;
+                feature = {
+                  ["$type"] = "app.bsky.richtext.facet#mention";
+                  did = profile.did;
+                };
+              }
+            else
+              self:warn("cannot get_profile: "..message)
+              buffer[#buffer + 1] = { text = "@"..mention }
+            end
+
             p = j + 1
           else
             buffer[#buffer + 1] = { text = "@" }
@@ -572,13 +568,42 @@ function class:parse_text(source)
     end
   end
 
-  return {
-    reply = reply;
-    quote = quote;
-    images = images;
+  local record = {
+    ["$type"] = "app.bsky.feed.post";
     text = data_writer;
+    createdAt = os.date "!%Y-%m-%dT%H:%M:%SZ";
+    langs = self.config.bsky.langs;
     facets = facets;
+    reply = reply;
   }
+
+  if quote then
+    if images then
+      record.embed = {
+        ["$type"] = "app.bsky.embed.recordWithMedia";
+        record = {
+          ["$type"] = "app.bsky.embed.record";
+          record = quote;
+        };
+        media = {
+          ["$type"] = "app.bsky.embed.images";
+          images = images;
+        };
+      }
+    else
+      record.embed = {
+        ["$type"] = "app.bsky.embed.record";
+        record = quote;
+      }
+    end
+  else
+    record.embed = {
+      ["$type"] = "app.bsky.embed.images";
+      images = images;
+    }
+  end
+
+  return record, images
 end
 
 ----------------------------------------------------------------------
@@ -600,6 +625,15 @@ function commands:delete_session(name)
   assert(self:delete_session(name))
 end
 
+function commands:get_record(name, rkey, repo)
+  assert(self:load_session(name))
+  if not repo then
+    repo = self.config.bsky.credentials[name].identifier
+  end
+  local result = assert(self:get_record(repo, rkey))
+  print(stringify_json(result))
+end
+
 ----------------------------------------------------------------------
 
 function commands:get_profile(name, actor)
@@ -608,9 +642,6 @@ function commands:get_profile(name, actor)
     actor = self.config.bsky.credentials[name].identifier
   end
   local r = assert(self:get_profile(actor))
-
-  -- local r = assert(self:get_profile(actor))
-
   io.write(([[
 did: %s
 handle: %s
@@ -647,95 +678,39 @@ createAt: %s
   end
 end
 
-function commands:get_record(name, rkey, repo)
-  assert(self:load_session(name))
-  if not repo then
-    repo = self.config.bsky.credentials[name].identifier
-  end
-  local record = assert(self:get_record(repo, rkey))
-  print(stringify_json(record))
-end
-
 ----------------------------------------------------------------------
 
 function commands:create_record(name)
   local session = assert(self:load_session(name))
   local lines = read_lines(io.stdin)
-  local r = assert(self:parse_text(lines))
-  local record = {
-    ["$type"] = "app.bsky.feed.post";
-    text = r.text;
-    createdAt = os.date "!%Y-%m-%dT%H:%M:%SZ";
-    langs = self.config.bsky.langs;
-    facets = r.facets;
-    reply = r.reply;
-  }
+  local record, images = assert(self:make_message(lines))
 
-  local images
-
-  if r.quote then
-    if r.images then
-      images = {}
-      record.embed = {
-        ["$type"] = "app.bsky.embed.recordWithMedia";
-        record = {
-          ["$type"] = "app.bsky.embed.record";
-          record = r.quote;
-        };
-        media = {
-          ["$type"] = "app.bsky.embed.images";
-          images = images;
-        };
-      }
-    else
-      record.embed = {
-        ["$type"] = "app.bsky.embed.record";
-        record = r.quote;
-      }
-    end
-  elseif r.images then
-    images = {}
-    record.embed = {
-      ["$type"] = "app.bsky.embed.images";
-      images = images;
-    }
-  end
-
-  if r.images then
-    for i, image in ipairs(r.images) do
-      image.suffix = assert(image.path:match "%.([^.]+)$")
-      image.content_type = assert(media_types[image.suffix])
-      image.data = assert(read_contents(image.path))
-    end
-
-    for i, image in ipairs(r.images) do
-      local blob = assert(self:upload_blob(image.content_type, image.data))
-      images[i] = {
-        alt = image.text;
-        image = blob.blob;
-      }
+  if images then
+    for i, image in ipairs(images) do
+      local suffix = assert(image.path:match "%.([^.]+)$")
+      local content_type = assert(media_types[suffix])
+      local data = assert(read_contents(image.path))
+      local blob = assert(self:upload_blob(content_type, data))
+      image.path = nil
+      image.image = blob.blob;
     end
   end
 
   print(stringify_json(record))
 
-
-  local response = assert(self:request("POST", bsky_url.."/com.atproto.repo.createRecord", self:make_header({
-    Authorization = "Bearer "..session.accessJwt;
-  }, media_types.json), stringify_json {
+  assert(self:post("com.atproto.repo.createRecord", "access", media_types.json, stringify_json {
     repo = self.config.bsky.credentials[name].identifier;
     collection = "app.bsky.feed.post";
     record = record;
   }))
-  assert(response.code == 200)
 end
 
 ----------------------------------------------------------------------
 
-function commands:parse_text(name)
+function commands:make_message(name)
   assert(self:load_session(name))
   local lines = read_lines(io.stdin)
-  print(stringify_json(self:parse_text(lines)))
+  print(stringify_json(self:make_message(lines)))
 end
 
 ----------------------------------------------------------------------
