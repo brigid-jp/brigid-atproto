@@ -1,0 +1,786 @@
+#! /usr/bin/env lua
+
+-- Copyright (c) 2024 <dev@brigid.jp>
+-- This software is released under the MIT License.
+-- https://opensource.org/licenses/mit-license.php
+
+local brigid = require "brigid"
+brigid.dlopen_self()
+
+local unpack = table.unpack or unpack
+
+----------------------------------------------------------------------
+
+-- https://www.iana.org/assignments/media-types/media-types.xhtml
+local media_types = {
+  json = "application/json";
+  urlencoded = "application/x-www-form-urlencoded";
+  jpg = "image/jpeg";
+  jpeg = "image/jpeg";
+  png = "image/png";
+  webp = "image/webp";
+}
+
+local bsky_url = "https://bsky.social/xrpc"
+local slack_url = "https://slack.com/api"
+
+----------------------------------------------------------------------
+
+local function read_contents(handle_or_path)
+  local handle = handle_or_path
+  if not handle.close then
+    handle, message = io.open(handle_or_path, "rb")
+    if not handle then
+      return handle, message
+    end
+  end
+
+  local contents = handle:read "*a"
+  handle:close()
+  return contents
+end
+
+local function read_json(handle_or_path)
+  local result, message = read_contents(handle_or_path)
+  if not result then
+    return result, message
+  end
+  return brigid.json.parse(result)
+end
+
+local function read_lines(handle)
+  local result = {}
+  for line in handle:lines() do
+    result[#result + 1] = line
+  end
+  return result
+end
+
+local function stringify_json(data)
+  return tostring(brigid.data_writer():write_json(data, 2))
+end
+
+----------------------------------------------------------------------
+
+local class = {}
+local metatable = { __index = class }
+
+function class.new(config)
+  local self = setmetatable({ config = config }, metatable)
+  self.http_session = brigid.http_session {
+    header = function (code, header)
+      self.response.code = code
+      self.response.header = header
+    end;
+    write = function (out)
+      self.response.data_writer:write(out)
+    end;
+  }
+  return self
+end
+
+function class:debug(...)
+  if self.config.debug then
+    local debug_path = self.config.data_dirpath..os.date "/%Y-%m-%d.log"
+    if self.debug_path ~= debug_path then
+      self.debug_path = debug_path
+      if self.debug_handle then
+        self.debug_handle:close()
+      end
+      self.debug_handle = assert(io.open(debug_path, "ab"))
+    end
+
+    local out = self.debug_handle
+    for i, v in ipairs {...} do
+      if i > 1 then
+        out:write "\t"
+      end
+      out:write(tostring(v))
+    end
+    out:write "\n"
+  end
+end
+
+function class:warn(...)
+  io.stderr:write(table.concat({...}, "\t"), "\n")
+end
+
+function class:make_header(source, content_type)
+  local result = {
+    ["User-Agent"] = self.config.ua;
+    ["Content-Type"] = content_type;
+  }
+  for k, v in pairs(source) do
+    result[k] = v
+  end
+  return result
+end
+
+function class:request(method, url, header, data)
+  self.response = { data_writer = brigid.data_writer() }
+
+  if self.config.debug then
+    self:debug "[request]"
+    self:debug(method, url)
+    self:debug(stringify_json(header))
+
+    local content_type = header["Content-Type"]
+    if content_type and not content_type:find "image/" then
+      self:debug(tostring(data))
+    end
+  end
+
+  local result, message = self.http_session:request {
+    method = method;
+    url = url;
+    header = header;
+    data = data;
+  }
+  if not result then
+    return result, message
+  end
+
+  if self.config.debug then
+    self:debug "[response]"
+    self:debug(self.response.code)
+    self:debug(stringify_json(self.response.header))
+    self:debug(tostring(self.response.data_writer))
+  end
+
+  return self.response
+end
+
+function class:get_session_path(name)
+  return self.config.data_dirpath.."/session-"..name..".json"
+end
+
+function class:save_session(name, data)
+  local writer, message = brigid.file_writer(self:get_session_path(name))
+  if not writer then
+    return writer, message
+  end
+  return writer:write(data):close()
+end
+
+function class:load_session(name)
+  local session, message = read_json(self:get_session_path(name))
+  if not session then
+    return session, message
+  end
+  self.session = session
+  return session
+end
+
+----------------------------------------------------------------------
+
+function class:post(endpoint, authz, content_type, data, refreshed)
+  local authorization
+  if authz == "access" then
+    authorization = "Bearer "..self.session.accessJwt
+  elseif authz == "refresh" then
+    authorization = "Bearer "..self.session.refreshJwt
+  end
+
+  local url = bsky_url.."/"..endpoint
+  local response, message = self:request("POST", url, self:make_header({
+    Authorization = authorization;
+  }, content_type), data)
+  if not response then
+    return response, message
+  end
+
+  local content_type = response.header["Content-Type"]
+  if not content_type or not content_type:find(media_types.json, 1, true) then
+    if response.code ~= 200 then
+      return nil, response.code
+    end
+    return tostring(response.data_writer)
+  end
+
+  local result, message = brigid.json.parse(response.data_writer)
+  if not result then
+    return result, message
+  end
+
+  if not refreshed and response.code == 400 and result.error == "ExpiredToken" then
+    self:warn("session expired: "..url)
+    if authz == "access" then
+      local session, message = self:refresh_session(self.session.name)
+      if session then
+        self:warn "session refreshed"
+        return self:post(endpoint, authz, content_type, data, true)
+      else
+        self:warn("cannot refresh session: "..message)
+      end
+    elseif authz == "refresh" then
+      local name = self.session.name
+      local cred = self.config.bsky.credentials[name]
+      if cred then
+        local session, message = self:create_session(name, cred.identifier, cred.password)
+        if session then
+          self:warn "session recreated"
+          return self:post(endpoint, authz, content_type, data, true)
+        else
+          self:warn("cannot recreate session: "..message)
+        end
+      else
+        self:warn "cannot recreate session: cred not found"
+      end
+    end
+  end
+
+  if response.code ~= 200 then
+    return nil, result.error..": "..result.message
+  end
+  return result
+end
+
+function class:get_impl(url, refreshed)
+  local response = assert(self:request("GET", url, self:make_header {
+    Authorization = "Bearer "..self.session.accessJwt;
+  }))
+  if not response then
+    return response, message
+  end
+
+  local content_type = response.header["Content-Type"]
+  if not content_type or not content_type:find(media_types.json, 1, true) then
+    if response.code ~= 200 then
+      return nil, response.code
+    end
+    return tostring(response.data_writer)
+  end
+
+  local result, message = brigid.json.parse(response.data_writer)
+  if not result then
+    return result, message
+  end
+
+  if not refreshed and response.code == 400 and result.error == "ExpiredToken" then
+    self:warn("session expired: "..url)
+    local session, message = self:refresh_session(self.session.name)
+    if session then
+      self:warn "session refreshed"
+      return self:get_impl(url, true)
+    else
+      self:warn("cannot refresh session: "..message)
+    end
+  end
+
+  if response.code ~= 200 then
+    return nil, result.error..": "..result.message
+  end
+  return result
+end
+
+function class:get(endpoint, params)
+  local data_writer = brigid.data_writer()
+    :write(bsky_url)
+    :write "/"
+    :write(endpoint)
+  if params then
+    local first = true
+    for k, v in pairs(params) do
+      if first then
+        first = false
+        data_writer:write "?"
+      else
+        data_writer:write "&"
+      end
+      data_writer
+        :write_urlencoded(k)
+        :write "="
+        :write_urlencoded(v)
+    end
+  end
+  return self:get_impl(tostring(data_writer))
+end
+
+----------------------------------------------------------------------
+
+function class:create_session(name, identifier, password)
+  local session, message = self:post("com.atproto.server.createSession", nil, media_types.json, stringify_json {
+    identifier = identifier;
+    password = password;
+  })
+  if not session then
+    return session, message
+  end
+  session.name = name
+  self.session = session
+  local result, message = self:save_session(name, stringify_json(session))
+  if not result then
+    return result, message
+  end
+  return session, message
+end
+
+function class:refresh_session(name)
+  local session, message = self:post("com.atproto.server.refreshSession", "refresh")
+  if not session then
+    return session, message
+  end
+  session.name = name
+  self.session = session
+  local result, message = self:save_session(name, stringify_json(session))
+  if not result then
+    return result, message
+  end
+  return session, message
+end
+
+function class:delete_session(name)
+  return self:post("com.atproto.server.deleteSession", "refresh")
+end
+
+----------------------------------------------------------------------
+
+function class:get_record(repo, rkey)
+  return self:get("com.atproto.repo.getRecord", {
+    repo = repo;
+    collection = "app.bsky.feed.post";
+    rkey = rkey;
+  })
+end
+
+function class:get_profile(actor)
+  return self:get("app.bsky.actor.getProfile", { actor = actor })
+end
+
+function class:upload_blob(content_type, data)
+  return self:post("com.atproto.repo.uploadBlob", "access", content_type, data)
+end
+
+----------------------------------------------------------------------
+
+-- CommonMark
+--   https://spec.commonmark.org/
+-- GitHub Flavored Markdown
+--   https://github.github.com/gfm/
+-- Slack
+--   https://api.slack.com/reference/surfaces/formatting
+
+-- https://atproto.com/specs/handle
+-- https://atproto.com/specs/record-key
+
+function class:make_record(source)
+  local reply
+  local quote
+  local images
+  local buffer = {}
+
+  for i, line in ipairs(source) do
+    local processed
+    local command, tail = line:match "^!([@>[])(.+)$"
+    if i then
+      if command == "[" then
+        -- ![text](path)
+        local text, path = tail:match "([^%]]*)%]%(([^)]+)%)$"
+        if text then
+          local suffix = path:match "%.([^.]+)$"
+          local content_type = media_types[suffix]
+          if content_type then
+            local data, message = read_contents(path)
+            if data then
+              local image = {
+                alt = text;
+                image = {
+                  path = path;
+                  content_type = content_type;
+                  data = data;
+                  size = #data;
+                };
+              }
+              if images then
+                images[#images + 1] = image
+              else
+                images = { image }
+              end
+              processed = true
+            else
+              self:warn("cannot read_contents: "..message)
+            end
+          else
+            self:warn("media type unknown: "..path)
+          end
+        end
+      elseif command == "@" then
+        -- !@repo/rkey
+        local repo, rkey = tail:match "([0-9A-Za-z%-]+%.bsky%.social).*/([2-7a-z]+)$"
+        if repo then
+          local record, message = self:get_record(repo, rkey)
+          if record then
+            reply = {
+              parent = {
+                uri = record.uri;
+                cid = record.cid;
+              };
+            }
+            if record.value.reply then
+              reply.root = record.value.reply.root
+            else
+              reply.root = reply.parent
+            end
+            processed = true
+          else
+            self:warn("cannot get_record: "..message)
+          end
+        end
+      elseif command == ">" then
+        -- !>repo/rkey
+        local repo, rkey = tail:match "([0-9A-Za-z%-]+%.bsky%.social).*/([2-7a-z]+)$"
+        if repo then
+          local record, message = self:get_record(repo, rkey)
+          if record then
+            quote = {
+              uri = record.uri;
+              cid = record.cid;
+            }
+            processed = true
+          else
+            self:warn("cannot get_record: "..message)
+          end
+        end
+      end
+    end
+
+    if not processed then
+      local p = 1
+      while true do
+        local i, j, text, command = line:find("^(.-)([[<@#])", p)
+        if not i then
+          break
+        end
+        if text ~= "" then
+          buffer[#buffer + 1] = { text = text }
+        end
+        p = j + 1
+
+        if command == "[" then
+          -- [text](link)
+          local i, j, text, link = line:find("^(.-)%]%((.-)%)", p)
+          if i then
+            if text == "" then
+              text = link
+            end
+            buffer[#buffer + 1] = {
+              text = text;
+              feature = {
+                ["$type"] = "app.bsky.richtext.facet#link";
+                uri = link;
+              };
+            }
+            p = j + 1
+          else
+            buffer[#buffer + 1] = { text = "[" }
+          end
+        elseif command == "<" then
+          -- <link>
+          local i, j, link = line:find("^(.-)>", p)
+          if i then
+            buffer[#buffer + 1] = {
+              text = link;
+              feature = {
+                ["$type"] = "app.bsky.richtext.facet#link";
+                uri = link;
+              };
+            }
+            p = j + 1
+          else
+            buffer[#buffer + 1] = { text = "<" }
+          end
+        elseif command == "@" then
+          -- @mention
+          local i, j, mention = line:find("^([^[<@#%s]+)", p)
+          if i then
+            local profile, message = self:get_profile(mention)
+            if profile then
+              buffer[#buffer + 1] = {
+                text = "@"..mention;
+                feature = {
+                  ["$type"] = "app.bsky.richtext.facet#mention";
+                  did = profile.did;
+                };
+              }
+            else
+              self:warn("cannot get_profile: "..message)
+              buffer[#buffer + 1] = { text = "@"..mention }
+            end
+
+            p = j + 1
+          else
+            buffer[#buffer + 1] = { text = "@" }
+          end
+        elseif command == "#" then
+          -- #tag
+          local i, j, tag = line:find("^([^[<@#%s]+)", p)
+          if i then
+            buffer[#buffer + 1] = {
+              text = "#"..tag;
+              feature = {
+                ["$type"] = "app.bsky.richtext.facet#tag";
+                tag = tag;
+              };
+            }
+            p = j + 1
+          else
+            buffer[#buffer + 1] = { text = "#" }
+          end
+        end
+      end
+
+      if p <= #line then
+        buffer[#buffer + 1] = { text = line:sub(p) }
+      end
+      buffer[#buffer + 1] = { text = "\n" }
+    end
+  end
+
+  for i = #buffer, 1, -1 do
+    local v = buffer[i]
+    if not v.feature and v.text:find "^%s*$" then
+      buffer[i] = nil
+    else
+      break
+    end
+  end
+
+  local data_writer = brigid.data_writer()
+  local facets
+  local trim = true
+  for i, v in ipairs(buffer) do
+    if v.feature then
+      local n = #data_writer
+      local facet = {
+        index = {
+          byteStart = n;
+          byteEnd = n + #v.text;
+        };
+        features = { v.feature };
+      }
+      if facets then
+        facets[#facets + 1] = facet
+      else
+        facets = { facet }
+      end
+      data_writer:write(v.text)
+      trim = false
+    else
+      if not trim or not v.text:find "^%s*$" then
+        data_writer:write(v.text)
+        trim = false
+      end
+    end
+  end
+
+  local record = {
+    ["$type"] = "app.bsky.feed.post";
+    text = data_writer;
+    createdAt = os.date "!%Y-%m-%dT%H:%M:%SZ";
+    langs = self.config.bsky.langs;
+    facets = facets;
+    reply = reply;
+  }
+
+  self:set_quote(record, quote)
+  self:set_images(record, images)
+
+  return record, images
+end
+
+function class:set_reply(record, reply)
+  record.reply = reply
+end
+
+function class:set_quote(record, quote)
+  local embed = record.embed
+  if quote then
+    if embed then
+      if embed["$type"] == "app.bsky.embed.images" then
+        record.embed = {
+          ["$type"] = "app.bsky.embed.recordWithMedia";
+          record = {
+            ["$type"] = "app.bsky.embed.record";
+            record = quote;
+          };
+          media = embed;
+        }
+      elseif embed["$type"] == "app.bsky.embed.record" then
+        embed.record = quote
+      elseif embed["$type"] == "app.bsky.embed.recordWithMedia" then
+        embed.record.record = quote
+      end
+    else
+      record.embed = {
+        ["$type"] = "app.bsky.embed.record";
+        record = quote;
+      }
+    end
+  elseif embed then
+    if embed["$type"] == "app.bsky.embed.record" then
+      record.embed = nil
+    elseif embed["$type"] == "app.bsky.embed.recordWithMedia" then
+      record.embed = {
+        ["$type"] = "app.bsky.embed.images";
+        images = embed.images;
+      }
+    end
+  end
+end
+
+function class:set_images(record, images)
+  local embed = record.embed
+  if images then
+    if embed then
+      if embed["$type"] == "app.bsky.embed.images" then
+        embed.images = images
+      elseif embed["$type"] == "app.bsky.embed.record" then
+        record.embed = {
+          ["$type"] = "app.bsky.embed.recordWithMedia";
+          record = embed;
+          media = {
+            ["$type"] = "app.bsky.embed.images";
+            images = images;
+          };
+        }
+      elseif embed["$type"] == "app.bsky.embed.recordWithMedia" then
+        embed.media.images = images
+      end
+    else
+      record.embed = {
+        ["$type"] = "app.bsky.embed.images";
+        images = images;
+      }
+    end
+  elseif embed then
+    if embed["$type"] == "app.bsky.embed.images" then
+      record.embed = nil
+    elseif embed["$type"] == "app.bsky.embed.recordWithMedia" then
+      record.embed = {
+        ["$type"] = "app.bsky.embed.record";
+        record = embed.record;
+      }
+    end
+  end
+end
+
+----------------------------------------------------------------------
+
+local commands = {}
+
+function commands:create_session(name)
+  local cred = assert(self.config.bsky.credentials[name])
+  assert(self:create_session(name, cred.identifier, cred.password))
+end
+
+function commands:refresh_session(name)
+  assert(self:load_session(name))
+  assert(self:refresh_session(name))
+end
+
+function commands:delete_session(name)
+  assert(self:load_session(name))
+  assert(self:delete_session(name))
+end
+
+----------------------------------------------------------------------
+
+function commands:get_record(name, rkey, repo)
+  assert(self:load_session(name))
+  if not repo then
+    repo = self.config.bsky.credentials[name].identifier
+  end
+  local r = assert(self:get_record(repo, rkey))
+  print(stringify_json(r))
+end
+
+function commands:get_profile(name, actor)
+  assert(self:load_session(name))
+  if not actor then
+    actor = self.config.bsky.credentials[name].identifier
+  end
+  local r = assert(self:get_profile(actor))
+  print(stringify_json(r))
+end
+
+----------------------------------------------------------------------
+
+function commands:make_record(name)
+  assert(self:load_session(name))
+  local lines = read_lines(io.stdin)
+  local r, images = assert(self:make_record(lines))
+  if images then
+    for i, v in ipairs(images) do
+      v.image.data = nil
+    end
+  end
+  print(stringify_json(r))
+end
+
+function commands:create_record(name)
+  local session = assert(self:load_session(name))
+  local lines = read_lines(io.stdin)
+  local record, images = assert(self:make_record(lines))
+
+  if images then
+    for i, v in ipairs(images) do
+      local blob = assert(self:upload_blob(v.image.content_type, v.image.data))
+      v.image = blob.blob;
+    end
+  end
+
+  local r = assert(self:post("com.atproto.repo.createRecord", "access", media_types.json, stringify_json {
+    repo = self.config.bsky.credentials[name].identifier;
+    collection = "app.bsky.feed.post";
+    record = record;
+  }))
+  print(stringify_json(r))
+end
+
+----------------------------------------------------------------------
+
+function commands:slack(name, channel, username, iconname)
+  local app = assert(self.config.slack.apps[name])
+  local text = io.read "*a"
+
+  assert(self:request("POST", slack_url.."/chat.postMessage", self:make_header({
+    Authorization = "Bearer "..app.oauth_token;
+  }, media_types.json), stringify_json {
+    token = app.oauth_token;
+    channel = assert(channel);
+    blocks = {
+      {
+        type = "section";
+        text = {
+          type = "mrkdwn";
+          text = text;
+        };
+      };
+    };
+    username = username;
+    icon_url = self.config.icons[iconname];
+  }))
+end
+
+----------------------------------------------------------------------
+
+local home = os.getenv "HOME"
+if not home then
+  -- Windowsの場合
+  home = assert(os.getenv "HOMEDRIVE")..assert(os.getenv "HOMEPATH")
+end
+local config_path = home.."/.csn7rc"
+local config = read_json(config_path) or {}
+
+if not config.data_dirpath then
+  config.data_dirpath = home.."/.csn7"
+end
+brigid.mkdir(config.data_dirpath)
+
+local self = class.new(config)
+
+----------------------------------------------------------------------
+
+local command = assert(commands[arg[1]])
+command(self, unpack(arg, 2))
+
