@@ -62,6 +62,7 @@ end
 
 -- utf8.charpatternと互換な正規表現を使う。
 -- [\x00-\x7F\xC2-\xF4][\x80-\xBF]*
+-- コードポイントを数えているので結合文字の場合は正しくない値になる。
 local function count_utf8(s)
   local s = tostring(s)
   local c = 0
@@ -789,6 +790,28 @@ end
 
 ----------------------------------------------------------------------
 
+function commands:help()
+  io.write [[
+# Bluesky session
+csn7 create_session name
+csn7 refresh_session name
+csn7 delete_session name
+
+# Bluesky get
+csn7 get_record name rkey repo
+csn7 get_profile name actor
+
+# Bluesky post
+cat post.txt | csn7 make_record name
+cat post.txt | csn7 create_record name <post.txt
+
+# Slack post
+cat post.txt | csn7 slack name channel username iconname
+]]
+end
+
+----------------------------------------------------------------------
+
 local home = os.getenv "HOME"
 if not home then
   -- Windowsの場合
@@ -806,6 +829,5 @@ local self = class.new(config)
 
 ----------------------------------------------------------------------
 
-local command = assert(commands[arg[1]])
+local command = commands[arg[1]] or commands.help
 command(self, unpack(arg, 2))
-
