@@ -26,10 +26,13 @@ local slack_url = "https://slack.com/api"
 
 ----------------------------------------------------------------------
 
-local function read_contents(path)
-  local handle, message = io.open(path, "rb")
-  if not handle then
-    return handle, message
+local function read_contents(handle_or_path)
+  local handle = handle_or_path
+  if not handle.close then
+    handle, message = io.open(handle_or_path, "rb")
+    if not handle then
+      return handle, message
+    end
   end
 
   local contents = handle:read "*a"
@@ -37,8 +40,8 @@ local function read_contents(path)
   return contents
 end
 
-local function read_json(path)
-  local result , message = read_contents(path)
+local function read_json(handle_or_path)
+  local result, message = read_contents(handle_or_path)
   if not result then
     return result, message
   end
