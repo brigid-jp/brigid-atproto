@@ -15,6 +15,7 @@ local unpack = table.unpack or unpack
 local media_types = {
   json = "application/json";
   urlencoded = "application/x-www-form-urlencoded";
+  jpg = "image/jpeg";
   jpeg = "image/jpeg";
   png = "image/png";
   webp = "image/webp";
@@ -42,6 +43,14 @@ local function read_json(path)
     return result, message
   end
   return brigid.json.parse(result)
+end
+
+local function read_lines(handle)
+  local result = {}
+  for line in handle:lines() do
+    result[#result + 1] = line
+  end
+  return result
 end
 
 local function stringify_json(data)
@@ -107,6 +116,13 @@ end
 function class:request(method, url, header, data)
   self.response = { data_writer = brigid.data_writer() }
 
+  if self.config.debug then
+    self:debug "[request]"
+    self:debug(method, url)
+    self:debug(stringify_json(header))
+    self:debug(tostring(data))
+  end
+
   local result, message = self.http_session:request {
     method = method;
     url = url;
@@ -118,7 +134,10 @@ function class:request(method, url, header, data)
   end
 
   if self.config.debug then
-    self:debug(stringify_json(self.response))
+    self:debug "[response]"
+    self:debug(self.response.code)
+    self:debug(stringify_json(self.response.header))
+    self:debug(tostring(self.response.data_writer))
   end
 
   return self.response
@@ -147,6 +166,171 @@ end
 
 ----------------------------------------------------------------------
 
+-- authzはnil, refresh, access/trueのどれか
+function class:post(endpoint, authz, content_type, data, refreshed)
+  local authorization
+  if authz == "access" then
+    authorization = "Bearer "..self.session.accessJwt
+  elseif authz == "refresh" then
+    authorization = "Bearer "..self.session.refreshJwt
+  end
+
+  local url = bsky_url.."/"..endpoint
+  local response, message = self:request("POST", url, self:make_header({
+    Authorization = authorization;
+  }, content_type), data)
+  if not response then
+    return response, message
+  end
+
+  local content_type = response.header["Content-Type"]
+  if not content_type or not content_type:find(media_types.json, 1, true) then
+    if response.code ~= 200 then
+      return nil, response.code
+    end
+    return tostring(response.data_writer)
+  end
+
+  local result, message = brigid.json.parse(response.data_writer)
+  if not result then
+    return result, message
+  end
+
+  if not refreshed and response.code == 400 and result.error == "ExpiredToken" then
+    self:warn("session expired: "..url)
+    if authz == "access" then
+      local session, message = self:refresh_session(self.session.name)
+      if session then
+        self:warn "session refreshed"
+        return self:post(endpoint, authz, content_type, data, true)
+      else
+        self:warn("cannot refresh session: "..message)
+      end
+    elseif authz == "refresh" then
+      local name = self.session.name
+      local cred = self.config.bsky.credentials[name]
+      if cred then
+        local session, message = self:create_session(name, cred.identifier, cred.password)
+        if session then
+          self:warn "session recreated"
+          return self:post(endpoint, authz, content_type, data, true)
+        else
+          self:warn("cannot recreate session: "..message)
+        end
+      else
+        self:warn "cannot recreate session: cred not found"
+      end
+    end
+  end
+
+  if response.code ~= 200 then
+    return nil, result.error..": "..result.message
+  end
+  return result
+end
+
+function class:create_session(name, identifier, password)
+  local session, message = self:post("com.atproto.server.createSession", nil, media_types.json, stringify_json {
+    identifier = identifier;
+    password = password;
+  })
+  if not session then
+    return session, message
+  end
+  session.name = name
+  self.session = session
+  local result, message = self:save_session(name, stringify_json(session))
+  if not result then
+    return result, message
+  end
+  return session, message
+end
+
+function class:refresh_session(name)
+  local session, message = self:post("com.atproto.server.refreshSession", "refresh")
+  if not session then
+    return session, message
+  end
+  session.name = name
+  self.session = session
+  local result, message = self:save_session(name, stringify_json(session))
+  if not result then
+    return result, message
+  end
+  return session, message
+end
+
+function class:delete_session(name)
+  return self:post("com.atproto.server.deleteSession", "refresh")
+end
+
+----------------------------------------------------------------------
+
+function class:get_impl(url, refreshed)
+  local response = assert(self:request("GET", url, self:make_header {
+    Authorization = "Bearer "..self.session.accessJwt;
+  }))
+  if not response then
+    return response, message
+  end
+
+  local content_type = response.header["Content-Type"]
+  if not content_type or not content_type:find(media_types.json, 1, true) then
+    if response.code ~= 200 then
+      return nil, response.code
+    end
+    return tostring(response.data_writer)
+  end
+
+  local result, message = brigid.json.parse(response.data_writer)
+  if not result then
+    return result, message
+  end
+
+  if not refreshed and response.code == 400 and result.error == "ExpiredToken" then
+    self:warn("session expired: "..url)
+    local session, message = self:refresh_session(self.session.name)
+    if session then
+      self:warn "session refreshed"
+      return self:get_impl(url, true)
+    else
+      self:warn("cannot refresh session: "..message)
+    end
+  end
+
+  if response.code ~= 200 then
+    return nil, result.error..": "..result.message
+  end
+  return result
+end
+
+function class:get(endpoint, params)
+  local data_writer = brigid.data_writer()
+    :write(bsky_url)
+    :write "/"
+    :write(endpoint)
+  if params then
+    local first = true
+    for k, v in pairs(params) do
+      if first then
+        first = false
+        data_writer:write "?"
+      else
+        data_writer:write "&"
+      end
+      data_writer
+        :write_urlencoded(k)
+        :write "="
+        :write_urlencoded(v)
+    end
+  end
+  return self:get_impl(tostring(data_writer))
+end
+
+function class:get_profile(actor)
+  return self:get("app.bsky.actor.getProfile", { actor = actor })
+end
+
 function class:get_record(repo, rkey)
   local url = brigid.data_writer()
     :write(bsky_url)
@@ -159,6 +343,23 @@ function class:get_record(repo, rkey)
   local response, message = self:request("GET", tostring(url), self:make_header({
     Authorization = "Bearer "..self.session.accessJwt;
   }))
+  if not response then
+    return response, message
+  end
+  local result, message = brigid.json.parse(response.data_writer)
+  if not result then
+    return result, message
+  end
+  if response.code ~= 200 then
+    return nil, result.error..": "..result.message
+  end
+  return result
+end
+
+function class:upload_blob(content_type, data)
+  local response, message = self:request("POST", bsky_url.."/com.atproto.repo.uploadBlob", self:make_header({
+    Authorization = "Bearer "..self.session.accessJwt;
+  }, content_type), data)
   if not response then
     return response, message
   end
@@ -386,58 +587,30 @@ local commands = {}
 
 function commands:create_session(name)
   local cred = assert(self.config.bsky.credentials[name])
-
-  local response = assert(self:request("POST", bsky_url.."/com.atproto.server.createSession", self:make_header({
-  }, media_types.json), stringify_json {
-    identifier = cred.identifier;
-    password = cred.password;
-  }))
-  assert(response.code == 200)
-
-  self.session = brigid.json.parse(response.data_writer)
-  assert(self:save_session(name, response.data_writer))
+  assert(self:create_session(name, cred.identifier, cred.password))
 end
 
 function commands:refresh_session(name)
-  local session = assert(self:load_session(name))
-
-  local response = assert(self:request("POST", bsky_url.."/com.atproto.server.refreshSession", self:make_header {
-    Authorization = "Bearer "..session.refreshJwt;
-  }))
-  assert(response.code == 200)
-
-  self.session = brigid.json.parse(response.data_writer)
-  assert(self:save_session(name, response.data_writer))
+  assert(self:load_session(name))
+  assert(self:refresh_session(name))
 end
 
 function commands:delete_session(name)
-  local session = assert(self:load_session(name))
-
-  local response = assert(self:request("POST", bsky_url.."/com.atproto.server.deleteSession", self:make_header {
-    Authorization = "Bearer "..session.refreshJwt;
-  }))
-  assert(response.code == 200)
+  assert(self:load_session(name))
+  assert(self:delete_session(name))
 end
 
 ----------------------------------------------------------------------
 
 function commands:get_profile(name, actor)
-  local session = assert(self:load_session(name))
+  assert(self:load_session(name))
   if not actor then
     actor = self.config.bsky.credentials[name].identifier
   end
+  local r = assert(self:get_profile(actor))
 
-  local url = brigid.data_writer()
-    :write(bsky_url)
-    :write "/app.bsky.actor.getProfile"
-    :write "?actor="
-    :write_urlencoded(actor)
-  local response = assert(self:request("GET", tostring(url), self:make_header({
-    Authorization = "Bearer "..session.accessJwt;
-  })))
-  assert(response.code == 200)
+  -- local r = assert(self:get_profile(actor))
 
-  local r = assert(brigid.json.parse(response.data_writer))
   io.write(([[
 did: %s
 handle: %s
@@ -487,13 +660,65 @@ end
 
 function commands:create_record(name)
   local session = assert(self:load_session(name))
-  local text = io.read "*a"
-
+  local lines = read_lines(io.stdin)
+  local r = assert(self:parse_text(lines))
   local record = {
     ["$type"] = "app.bsky.feed.post";
-    text = text;
+    text = r.text;
     createdAt = os.date "!%Y-%m-%dT%H:%M:%SZ";
+    langs = self.config.bsky.langs;
+    facets = r.facets;
+    reply = r.reply;
   }
+
+  local images
+
+  if r.quote then
+    if r.images then
+      images = {}
+      record.embed = {
+        ["$type"] = "app.bsky.embed.recordWithMedia";
+        record = {
+          ["$type"] = "app.bsky.embed.record";
+          record = r.quote;
+        };
+        media = {
+          ["$type"] = "app.bsky.embed.images";
+          images = images;
+        };
+      }
+    else
+      record.embed = {
+        ["$type"] = "app.bsky.embed.record";
+        record = r.quote;
+      }
+    end
+  elseif r.images then
+    images = {}
+    record.embed = {
+      ["$type"] = "app.bsky.embed.images";
+      images = images;
+    }
+  end
+
+  if r.images then
+    for i, image in ipairs(r.images) do
+      image.suffix = assert(image.path:match "%.([^.]+)$")
+      image.content_type = assert(media_types[image.suffix])
+      image.data = assert(read_contents(image.path))
+    end
+
+    for i, image in ipairs(r.images) do
+      local blob = assert(self:upload_blob(image.content_type, image.data))
+      images[i] = {
+        alt = image.text;
+        image = blob.blob;
+      }
+    end
+  end
+
+  print(stringify_json(record))
+
 
   local response = assert(self:request("POST", bsky_url.."/com.atproto.repo.createRecord", self:make_header({
     Authorization = "Bearer "..session.accessJwt;
@@ -509,10 +734,7 @@ end
 
 function commands:parse_text(name)
   assert(self:load_session(name))
-  local lines = {}
-  for line in io.lines() do
-    lines[#lines + 1] = line
-  end
+  local lines = read_lines(io.stdin)
   print(stringify_json(self:parse_text(lines)))
 end
 
