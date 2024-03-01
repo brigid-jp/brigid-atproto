@@ -56,8 +56,8 @@ local function read_lines(handle)
   return result
 end
 
-local function stringify_json(data)
-  return tostring(brigid.data_writer():write_json(data))
+local function stringify_json(data, indent)
+  return tostring(brigid.data_writer():write_json(data, indent))
 end
 
 ----------------------------------------------------------------------
@@ -377,16 +377,32 @@ function class:make_record(source)
         -- ![text](path)
         local text, path = tail:match "([^%]]*)%]%(([^)]+)%)$"
         if text then
-          local image = {
-            alt = text;
-            path = path;
-          }
-          if images then
-            images[#images + 1] = image
+          local suffix = path:match "%.([^.]+)$"
+          local content_type = media_types[suffix]
+          if content_type then
+            local data, message = read_contents(path)
+            if data then
+              local image = {
+                alt = text;
+                image = {
+                  path = path;
+                  content_type = content_type;
+                  data = data;
+                  size = #data;
+                };
+              }
+              if images then
+                images[#images + 1] = image
+              else
+                images = { image }
+              end
+              processed = true
+            else
+              self:warn("cannot read_contents: "..message)
+            end
           else
-            images = { image }
+            self:warn("media type unknown: "..path)
           end
-          processed = true
         end
       elseif command == "@" then
         -- !@repo/rkey
@@ -644,7 +660,13 @@ end
 function commands:make_record(name)
   assert(self:load_session(name))
   local lines = read_lines(io.stdin)
-  print(stringify_json(self:make_record(lines)))
+  local record, images = assert(self:make_record(lines))
+  if images then
+    for i, image in ipairs(images) do
+      image.image.data = nil
+    end
+  end
+  print(stringify_json(record, 2))
 end
 
 function commands:create_record(name)
