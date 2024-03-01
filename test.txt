@@ -1,12 +1,6 @@
-!@vaporoid.bsky.social/3kmk5zratj72t
 
-     [テスト](https://vaporoid.com/)    
-これは[テスト](https://vaporoid.com/)です。
-たぐじゃないの#@ です。
-あ  い う。 
-<https://dromozoa.com/>
-#タグ#テスト@kan7.bsky.social 
+@csn7.bsky.social いまどうしてる？
+
 ![黒猫1](test/cat1.jpg)
 ![黒猫2](test/cat2.jpg)
-
-!>https://bsky.app/profile/csn7.bsky.social/post/3kmk62xwhyc2n
+!>https://bsky.app/profile/vaporoid.bsky.social/post/3klxyt3o3qo26
