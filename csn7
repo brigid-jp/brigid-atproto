@@ -662,8 +662,8 @@ function commands:make_record(name)
   local lines = read_lines(io.stdin)
   local record, images = assert(self:make_record(lines))
   if images then
-    for i, image in ipairs(images) do
-      image.image.data = nil
+    for i, v in ipairs(images) do
+      v.image.data = nil
     end
   end
   print(stringify_json(record, 2))
@@ -675,17 +675,13 @@ function commands:create_record(name)
   local record, images = assert(self:make_record(lines))
 
   if images then
-    for i, image in ipairs(images) do
-      local suffix = assert(image.path:match "%.([^.]+)$")
-      local content_type = assert(media_types[suffix])
-      local data = assert(read_contents(image.path))
-      local blob = assert(self:upload_blob(content_type, data))
-      image.path = nil
-      image.image = blob.blob;
+    for i, v in ipairs(images) do
+      local blob = assert(self:upload_blob(v.image.content_type, v.image.data))
+      v.image = blob.blob;
     end
   end
 
-  print(stringify_json(record))
+  print(stringify_json(record, 2))
 
   assert(self:post("com.atproto.repo.createRecord", "access", media_types.json, stringify_json {
     repo = self.config.bsky.credentials[name].identifier;
