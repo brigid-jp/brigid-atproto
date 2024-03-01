@@ -803,7 +803,7 @@ csn7 get_profile name actor
 
 # Bluesky post
 cat post.txt | csn7 make_record name
-cat post.txt | csn7 create_record name <post.txt
+cat post.txt | csn7 create_record name
 
 # Slack post
 cat post.txt | csn7 slack name channel username iconname
