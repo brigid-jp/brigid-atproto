@@ -582,33 +582,86 @@ function class:make_record(source)
     reply = reply;
   }
 
+  self:set_quote(record, quote)
+  self:set_images(record, images)
+
+  return record, images
+end
+
+function class:set_reply(record, reply)
+  record.reply = reply
+end
+
+function class:set_quote(record, quote)
+  local embed = record.embed
   if quote then
-    if images then
-      record.embed = {
-        ["$type"] = "app.bsky.embed.recordWithMedia";
-        record = {
-          ["$type"] = "app.bsky.embed.record";
-          record = quote;
-        };
-        media = {
-          ["$type"] = "app.bsky.embed.images";
-          images = images;
-        };
-      }
+    if embed then
+      if embed["$type"] == "app.bsky.embed.images" then
+        record.embed = {
+          ["$type"] = "app.bsky.embed.recordWithMedia";
+          record = {
+            ["$type"] = "app.bsky.embed.record";
+            record = quote;
+          };
+          media = embed;
+        }
+      elseif embed["$type"] == "app.bsky.embed.record" then
+        embed.record = quote
+      elseif embed["$type"] == "app.bsky.embed.recordWithMedia" then
+        embed.record.record = quote
+      end
     else
       record.embed = {
         ["$type"] = "app.bsky.embed.record";
         record = quote;
       }
     end
-  elseif images then
-    record.embed = {
-      ["$type"] = "app.bsky.embed.images";
-      images = images;
-    }
+  elseif embed then
+    if embed["$type"] == "app.bsky.embed.record" then
+      record.embed = nil
+    elseif embed["$type"] == "app.bsky.embed.recordWithMedia" then
+      record.embed = {
+        ["$type"] = "app.bsky.embed.images";
+        images = embed.images;
+      }
+    end
   end
+end
 
-  return record, images
+function class:set_images(record, images)
+  local embed = record.embed
+  if images then
+    if embed then
+      if embed["$type"] == "app.bsky.embed.images" then
+        embed.images = images
+      elseif embed["$type"] == "app.bsky.embed.record" then
+        record.embed = {
+          ["$type"] = "app.bsky.embed.recordWithMedia";
+          record = embed;
+          media = {
+            ["$type"] = "app.bsky.embed.images";
+            images = images;
+          };
+        }
+      elseif embed["$type"] == "app.bsky.embed.recordWithMedia" then
+        embed.media.images = images
+      end
+    else
+      record.embed = {
+        ["$type"] = "app.bsky.embed.images";
+        images = images;
+      }
+    end
+  elseif embed then
+    if embed["$type"] == "app.bsky.embed.images" then
+      record.embed = nil
+    elseif embed["$type"] == "app.bsky.embed.recordWithMedia" then
+      record.embed = {
+        ["$type"] = "app.bsky.embed.record";
+        record = embed.record;
+      }
+    end
+  end
 end
 
 ----------------------------------------------------------------------
