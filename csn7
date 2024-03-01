@@ -60,6 +60,23 @@ local function stringify_json(data)
   return tostring(brigid.data_writer():write_json(data, 2))
 end
 
+-- utf8.charpatternと互換な正規表現を使う。
+-- [\x00-\x7F\xC2-\xF4][\x80-\xBF]*
+local function count_utf8(s)
+  local s = tostring(s)
+  local c = 0
+  local n = 0
+  for char in s:gmatch "[%z\1-\127\194-\244][\128-\191]*" do
+    c = c + 1
+    n = n + #char
+  end
+  assert(n == #s)
+  if utf8 then
+    assert(c == utf8.len(s))
+  end
+  return c
+end
+
 ----------------------------------------------------------------------
 
 local class = {}
@@ -691,7 +708,7 @@ function commands:get_record(name, rkey, repo)
     repo = self.config.bsky.credentials[name].identifier
   end
   local r = assert(self:get_record(repo, rkey))
-  print(stringify_json(r))
+  io.write(stringify_json(r), "\n")
 end
 
 function commands:get_profile(name, actor)
@@ -700,7 +717,7 @@ function commands:get_profile(name, actor)
     actor = self.config.bsky.credentials[name].identifier
   end
   local r = assert(self:get_profile(actor))
-  print(stringify_json(r))
+  io.write(stringify_json(r), "\n")
 end
 
 ----------------------------------------------------------------------
@@ -709,12 +726,20 @@ function commands:make_record(name)
   assert(self:load_session(name))
   local lines = read_lines(io.stdin)
   local r, images = assert(self:make_record(lines))
+  local char_count = count_utf8(r.text)
+  local image_size = 0
   if images then
     for i, v in ipairs(images) do
       v.image.data = nil
+      image_size = image_size + v.image.size
     end
   end
-  print(stringify_json(r))
+
+  io.write(stringify_json(r), "\n")
+  io.stderr:write(tostring(r.text), "\n")
+  io.stderr:write(("-"):rep(70), "\n")
+  io.stderr:write(("文字数:    %8d (%s)\n"):format(char_count, char_count <= 300 and "OK" or "NG"))
+  io.stderr:write(("画像サイズ:%8d (%s)\n"):format(image_size, image_size <= 1000000 and "OK" or "NG"))
 end
 
 function commands:create_record(name)
@@ -734,7 +759,7 @@ function commands:create_record(name)
     collection = "app.bsky.feed.post";
     record = record;
   }))
-  print(stringify_json(r))
+  io.write(stringify_json(r), "\n")
 end
 
 ----------------------------------------------------------------------
