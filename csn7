@@ -62,6 +62,7 @@ end
 
 -- utf8.charpatternと互換な正規表現を使う。
 -- [\x00-\x7F\xC2-\xF4][\x80-\xBF]*
+-- コードポイントを数えているので結合文字の場合は正しくない値になる。
 local function count_utf8(s)
   local s = tostring(s)
   local c = 0
