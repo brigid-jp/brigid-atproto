@@ -254,9 +254,9 @@ function class:post(endpoint, authz, content_type, data, refreshed)
 end
 
 function class:get_impl(url, refreshed)
-  local response = assert(self:request("GET", url, self:make_header {
+  local response, message = self:request("GET", url, self:make_header {
     Authorization = "Bearer "..self.session.accessJwt;
-  }))
+  })
   if not response then
     return response, message
   end
@@ -790,6 +790,68 @@ end
 
 ----------------------------------------------------------------------
 
+function class:crwd_request(method, path, data)
+  local url = self.config.crwd.url..path
+  local content_type
+  local content
+  if data then
+    content_type = media_types.json
+    content = stringify_json(data)
+  end
+  local response, message = self:request(method, url, self:make_header({}, content_type), content)
+  if not response then
+    return response, message
+  end
+
+  local content_type = response.header["Content-Type"]
+  if not content_type or not content_type:find(media_types.json, 1, true) then
+    if response.code ~= 200 then
+      return nil, response.code
+    end
+    return tostring(response.data_writer)
+  end
+
+  local result, message = brigid.json.parse(response.data_writer)
+  if not result then
+    return result, message
+  end
+
+  if response.code ~= 200 then
+    return nil, result.value.error..": "..result.value.message
+  end
+  return result
+end
+
+function class:crwd_get_session_path(name)
+  return self.config.data_dirpath.."/crwd_session-"..name..".json"
+end
+
+function commands:crwd_new_session(name)
+  local r = assert(self:crwd_request("POST", "/session", {
+    capabilities = {
+      alwaysMatch = {
+        ["goog:chromeOptions"] = {
+          binary = self.config.crwd.binary;
+          args = self.config.crwd.args;
+          excludeSwitches = self.config.crwd.exclude_switches;
+        };
+      };
+    };
+  }))
+  local handle = assert(io.open(self:crwd_get_session_path(name), "wb"))
+  handle:write(stringify_json(r.value), "\n")
+  handle:close()
+  io.write(stringify_json(r), "\n")
+end
+
+function commands:crwd_delete_session(name)
+  local session_id = read_json(self:crwd_get_session_path(name)).sessionId
+  local r = assert(self:crwd_request("DELETE", "/session/"..session_id))
+  io.write(stringify_json(r), "\n")
+end
+
+----------------------------------------------------------------------
+
 function commands:help()
   io.write [[
 # Bluesky session
@@ -826,8 +888,5 @@ end
 brigid.mkdir(config.data_dirpath)
 
 local self = class.new(config)
-
-----------------------------------------------------------------------
-
 local command = commands[arg[1]] or commands.help
 command(self, unpack(arg, 2))
