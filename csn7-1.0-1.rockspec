@@ -4,6 +4,9 @@ source = {
   url = "https://github.com/brigid-jp/csn7/archive/v1.0.tar.gz";
   file = "csn7-1.0.tar.gz";
 }
+dependencies = {
+  "brigid";
+}
 description = {
   summary = "";
   license = "MIT";
@@ -12,6 +15,7 @@ description = {
 }
 build = {
   type = "builtin";
+  modules = {};
   install = {
     bin = {
       csn7 = "csn7";
