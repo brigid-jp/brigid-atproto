@@ -344,22 +344,8 @@ function class:get_profile(actor)
   return self:get("app.bsky.actor.getProfile", { actor = actor })
 end
 
--- TODO fixme
 function class:upload_blob(content_type, data)
-  local response, message = self:request("POST", bsky_url.."/com.atproto.repo.uploadBlob", self:make_header({
-    Authorization = "Bearer "..self.session.accessJwt;
-  }, content_type), data)
-  if not response then
-    return response, message
-  end
-  local result, message = brigid.json.parse(response.data_writer)
-  if not result then
-    return result, message
-  end
-  if response.code ~= 200 then
-    return nil, result.error..": "..result.message
-  end
-  return result
+  return self:post("com.atproto.repo.uploadBlob", "access", content_type, data)
 end
 
 ----------------------------------------------------------------------
@@ -625,6 +611,8 @@ function commands:delete_session(name)
   assert(self:delete_session(name))
 end
 
+----------------------------------------------------------------------
+
 function commands:get_record(name, rkey, repo)
   assert(self:load_session(name))
   if not repo then
@@ -633,8 +621,6 @@ function commands:get_record(name, rkey, repo)
   local result = assert(self:get_record(repo, rkey))
   print(stringify_json(result))
 end
-
-----------------------------------------------------------------------
 
 function commands:get_profile(name, actor)
   assert(self:load_session(name))
@@ -650,35 +636,13 @@ description: %s
 ]]):format(r.did, r.handle, r.displayName, r.description))
 end
 
-function commands:get_author_feed(name, actor)
-  local session = assert(self:load_session(name))
-  if not actor then
-    actor = self.config.bsky.credentials[name].identifier
-  end
-
-  local url = brigid.data_writer()
-    :write(bsky_url)
-    :write "/app.bsky.feed.getAuthorFeed"
-    :write "?actor="
-    :write_urlencoded(actor)
-  local response = assert(self:request("GET", tostring(url), self:make_header({
-    Authorization = "Bearer "..session.accessJwt;
-  })))
-  assert(response.code == 200)
-
-  local r = assert(brigid.json.parse(response.data_writer))
-  for i, v in ipairs(r.feed) do
-    local record = v.post.record
-    io.write(([[
-post.cid: %s
-post.uri: %s
-createAt: %s
-%s
-]]):format(v.post.cid, v.post.uri, record.createdAt, record.text))
-  end
-end
-
 ----------------------------------------------------------------------
+
+function commands:make_record(name)
+  assert(self:load_session(name))
+  local lines = read_lines(io.stdin)
+  print(stringify_json(self:make_record(lines)))
+end
 
 function commands:create_record(name)
   local session = assert(self:load_session(name))
@@ -703,14 +667,6 @@ function commands:create_record(name)
     collection = "app.bsky.feed.post";
     record = record;
   }))
-end
-
-----------------------------------------------------------------------
-
-function commands:make_record(name)
-  assert(self:load_session(name))
-  local lines = read_lines(io.stdin)
-  print(stringify_json(self:make_record(lines)))
 end
 
 ----------------------------------------------------------------------
