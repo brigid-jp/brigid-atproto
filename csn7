@@ -56,8 +56,8 @@ local function read_lines(handle)
   return result
 end
 
-local function stringify_json(data, indent)
-  return tostring(brigid.data_writer():write_json(data, indent))
+local function stringify_json(data)
+  return tostring(brigid.data_writer():write_json(data, 2))
 end
 
 ----------------------------------------------------------------------
@@ -690,8 +690,8 @@ function commands:get_record(name, rkey, repo)
   if not repo then
     repo = self.config.bsky.credentials[name].identifier
   end
-  local result = assert(self:get_record(repo, rkey))
-  print(stringify_json(result))
+  local r = assert(self:get_record(repo, rkey))
+  print(stringify_json(r))
 end
 
 function commands:get_profile(name, actor)
@@ -700,12 +700,7 @@ function commands:get_profile(name, actor)
     actor = self.config.bsky.credentials[name].identifier
   end
   local r = assert(self:get_profile(actor))
-  io.write(([[
-did: %s
-handle: %s
-displayName: %s
-description: %s
-]]):format(r.did, r.handle, r.displayName, r.description))
+  print(stringify_json(r))
 end
 
 ----------------------------------------------------------------------
@@ -713,13 +708,13 @@ end
 function commands:make_record(name)
   assert(self:load_session(name))
   local lines = read_lines(io.stdin)
-  local record, images = assert(self:make_record(lines))
+  local r, images = assert(self:make_record(lines))
   if images then
     for i, v in ipairs(images) do
       v.image.data = nil
     end
   end
-  print(stringify_json(record, 2))
+  print(stringify_json(r))
 end
 
 function commands:create_record(name)
@@ -734,13 +729,12 @@ function commands:create_record(name)
     end
   end
 
-  print(stringify_json(record, 2))
-
-  assert(self:post("com.atproto.repo.createRecord", "access", media_types.json, stringify_json {
+  local r = assert(self:post("com.atproto.repo.createRecord", "access", media_types.json, stringify_json {
     repo = self.config.bsky.credentials[name].identifier;
     collection = "app.bsky.feed.post";
     record = record;
   }))
+  print(stringify_json(r))
 end
 
 ----------------------------------------------------------------------
