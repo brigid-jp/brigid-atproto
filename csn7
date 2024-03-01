@@ -826,28 +826,46 @@ function class:crwd_get_session_path(name)
   return self.config.data_dirpath.."/crwd_session-"..name..".json"
 end
 
+function class:crwd_save_session(name, session)
+  local handle, message = io.open(self:crwd_get_session_path(name), "wb")
+  if not handle then
+    return handle, message
+  end
+  handle:write(stringify_json(session), "\n")
+  handle:close()
+  return session.sessionId
+end
+
+function class:crwd_get_sesion_id(name)
+  local session, message = read_json(self:crwd_get_session_path(name))
+  if not session then
+    return session, message
+  end
+  return session.sessionId
+end
+
 function commands:crwd_new_session(name)
+  local session_id = self:crwd_get_sesion_id(name)
+  if session_id then
+    error("session exists: "..name)
+  end
+
   local r = assert(self:crwd_request("POST", "/session", {
     capabilities = {
       alwaysMatch = {
-        ["goog:chromeOptions"] = {
-          binary = self.config.crwd.binary;
-          args = self.config.crwd.args;
-          excludeSwitches = self.config.crwd.exclude_switches;
-        };
+        ["goog:chromeOptions"] = self.config.crwd.chrome_options;
       };
     };
   }))
-  local handle = assert(io.open(self:crwd_get_session_path(name), "wb"))
-  handle:write(stringify_json(r.value), "\n")
-  handle:close()
+  assert(self:crwd_save_session(name, r.value))
   io.write(stringify_json(r), "\n")
 end
 
 function commands:crwd_delete_session(name)
-  local session_id = read_json(self:crwd_get_session_path(name)).sessionId
+  local session_id = assert(self:crwd_get_sesion_id(name))
   local r = assert(self:crwd_request("DELETE", "/session/"..session_id))
   io.write(stringify_json(r), "\n")
+  os.remove(self:crwd_get_session_path(name))
 end
 
 ----------------------------------------------------------------------
