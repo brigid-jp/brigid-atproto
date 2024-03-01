@@ -530,9 +530,9 @@ function class:make_record(source)
             buffer[#buffer + 1] = { text = "@" }
           end
         elseif command == "#" then
-          -- #tag
+          -- #tag （数字だけの場合は不許可）
           local i, j, tag = line:find("^([^[<@#%s]+)", p)
-          if i then
+          if i and not tag:find "^%d+$" then
             buffer[#buffer + 1] = {
               text = "#"..tag;
               feature = {
@@ -803,7 +803,7 @@ csn7 get_profile name actor
 
 # Bluesky post
 cat post.txt | csn7 make_record name
-cat post.txt | csn7 create_record name <post.txt
+cat post.txt | csn7 create_record name
 
 # Slack post
 cat post.txt | csn7 slack name channel username iconname
