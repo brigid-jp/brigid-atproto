@@ -530,9 +530,9 @@ function class:make_record(source)
             buffer[#buffer + 1] = { text = "@" }
           end
         elseif command == "#" then
-          -- #tag
+          -- #tag （数字だけの場合は不許可）
           local i, j, tag = line:find("^([^[<@#%s]+)", p)
-          if i then
+          if i and not tag:find "^%d+$" then
             buffer[#buffer + 1] = {
               text = "#"..tag;
               feature = {
