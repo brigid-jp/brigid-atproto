@@ -920,7 +920,6 @@ end
 function commands:crwd_source(name)
   local session_id = assert(self:crwd_get_sesion_id(name))
   local r = assert(self:crwd_request("GET", "/session/"..session_id.."/source"))
-  -- io.write(stringify_json(r), "\n")
   io.write(r.value, "\n")
 end
 
