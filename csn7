@@ -796,28 +796,6 @@ end
 
 ----------------------------------------------------------------------
 
-function commands:help()
-  io.write [[
-# Bluesky session
-csn7 create_session name
-csn7 refresh_session name
-csn7 delete_session name
-
-# Bluesky get
-csn7 get_record name rkey repo
-csn7 get_profile name actor
-
-# Bluesky post
-cat post.txt | csn7 make_record name
-cat post.txt | csn7 create_record name
-
-# Slack post
-cat post.txt | csn7 slack name channel username iconname
-]]
-end
-
-----------------------------------------------------------------------
-
 local driver_class = setmetatable({}, { __index = class })
 local driver_metatable = { __index = driver_class }
 local driver_commands = {}
@@ -1027,6 +1005,51 @@ function driver_commands:screenshot(name, using, value)
     local r = assert(self:request("GET", "/session/"..session_id.."/screenshot"))
     io.write(r.value, "\n")
   end
+end
+
+----------------------------------------------------------------------
+
+function commands:help()
+  io.write [=[
+# Bluesky
+
+csn7 create_session name
+csn7 refresh_session name
+csn7 delete_session name
+
+csn7 get_record name rkey [repo]
+csn7 get_profile name [actor]
+
+cat post.txt | csn7 make_record name
+cat post.txt | csn7 create_record name
+
+# Slack
+
+cat post.txt | csn7 slack name channel [username [iconname]]
+
+# WebDriver
+
+csn7 d:new_session name
+csn7 d:delete_session name
+csn7 d:status
+
+csn7 d:set_url name url
+csn7 d:get_url name
+csn7 d:back name
+csn7 d:forward name
+csn7 d:refresh name
+
+csn7 d:find_element name using value
+csn7 d:find_elements name using value
+csn7 d:click name using value
+csn7 d:set_value name using value
+csn7 d:source name
+
+csn7 d:execute name script [...]
+cat script.js | csn7 d:execute name
+csn7 d:screenshot name
+csn7 d:screenshot name using value
+]=]
 end
 
 ----------------------------------------------------------------------
