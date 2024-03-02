@@ -824,15 +824,15 @@ function driver_class.new(config)
   return setmetatable(driver_class.construct(config), driver_metatable)
 end
 
-function driver_class:crwd_request(method, path, data)
-  local url = self.config.crwd.url..path
+function driver_class:request(method, path, data)
+  local url = self.config.driver.url..path
   local content_type
   local content
   if data then
     content_type = media_types.json
     content = stringify_json(data)
   end
-  local response, message = self:request(method, url, self:make_header({}, content_type), content)
+  local response, message = class.request(self, method, url, self:make_header({}, content_type), content)
   if not response then
     return response, message
   end
@@ -856,12 +856,12 @@ function driver_class:crwd_request(method, path, data)
   return result
 end
 
-function driver_class:crwd_get_session_path(name)
-  return self.config.data_dirpath.."/crwd_session-"..name..".json"
+function driver_class:get_session_path(name)
+  return self.config.data_dirpath.."/driver_session-"..name..".json"
 end
 
-function driver_class:crwd_save_session(name, session)
-  local handle, message = io.open(self:crwd_get_session_path(name), "wb")
+function driver_class:save_session(name, session)
+  local handle, message = io.open(self:get_session_path(name), "wb")
   if not handle then
     return handle, message
   end
@@ -870,8 +870,8 @@ function driver_class:crwd_save_session(name, session)
   return session.sessionId
 end
 
-function driver_class:crwd_get_sesion_id(name)
-  local session, message = read_json(self:crwd_get_session_path(name))
+function driver_class:get_sesion_id(name)
+  local session, message = read_json(self:get_session_path(name))
   if not session then
     return session, message
   end
@@ -880,55 +880,55 @@ end
 
 ----------------------------------------------------------------------
 
-function driver_commands:crwd_new_session(name)
-  local session_id = self:crwd_get_sesion_id(name)
+function driver_commands:new_session(name)
+  local session_id = self:get_sesion_id(name)
   if session_id then
     error("session exists: "..name)
   end
 
-  local r = assert(self:crwd_request("POST", "/session", {
+  local r = assert(self:request("POST", "/session", {
     capabilities = {
       alwaysMatch = {
-        ["goog:chromeOptions"] = self.config.crwd.chrome_options;
+        ["goog:chromeOptions"] = self.config.driver.chrome_options;
       };
     };
   }))
-  assert(self:crwd_save_session(name, r.value))
+  assert(self:save_session(name, r.value))
   io.write(stringify_json(r), "\n")
 end
 
-function driver_commands:crwd_delete_session(name)
-  local session_id = assert(self:crwd_get_sesion_id(name))
-  local r = assert(self:crwd_request("DELETE", "/session/"..session_id))
+function driver_commands:delete_session(name)
+  local session_id = assert(self:get_sesion_id(name))
+  local r = assert(self:request("DELETE", "/session/"..session_id))
   io.write(stringify_json(r), "\n")
-  os.remove(self:crwd_get_session_path(name))
+  os.remove(self:get_session_path(name))
 end
 
-function driver_commands:crwd_status()
-  local r = assert(self:crwd_request("GET", "/status"))
+function driver_commands:status()
+  local r = assert(self:request("GET", "/status"))
   io.write(stringify_json(r), "\n")
 end
 
-function driver_commands:crwd_navigate_to(name, url)
-  local session_id = assert(self:crwd_get_sesion_id(name))
-  local r = assert(self:crwd_request("POST", "/session/"..session_id.."/url", {
+function driver_commands:navigate_to(name, url)
+  local session_id = assert(self:get_sesion_id(name))
+  local r = assert(self:request("POST", "/session/"..session_id.."/url", {
     url = url;
   }))
   io.write(stringify_json(r), "\n")
 end
 
-function driver_commands:crwd_find_element(name, using, value)
-  local session_id = assert(self:crwd_get_sesion_id(name))
-  local r = assert(self:crwd_request("POST", "/session/"..session_id.."/element", {
+function driver_commands:find_element(name, using, value)
+  local session_id = assert(self:get_sesion_id(name))
+  local r = assert(self:request("POST", "/session/"..session_id.."/element", {
     using = using;
     value = value;
   }))
   io.write(stringify_json(r), "\n")
 end
 
-function driver_commands:crwd_find_elements(name, using, value)
-  local session_id = assert(self:crwd_get_sesion_id(name))
-  local r = assert(self:crwd_request("POST", "/session/"..session_id.."/elements", {
+function driver_commands:find_elements(name, using, value)
+  local session_id = assert(self:get_sesion_id(name))
+  local r = assert(self:request("POST", "/session/"..session_id.."/elements", {
     using = using;
     value = value;
   }))
@@ -938,24 +938,24 @@ end
 -- https://webdriver.io/docs/api/element/click/
 -- https://w3c.github.io/webdriver/#processing-actions
 -- x, y, buttonあたりは使いそう
-function driver_commands:crwd_element_click(name, element_id)
-  local session_id = assert(self:crwd_get_sesion_id(name))
-  local r = assert(self:crwd_request("POST", "/session/"..session_id.."/element/"..element_id.."/click", {
+function driver_commands:element_click(name, element_id)
+  local session_id = assert(self:get_sesion_id(name))
+  local r = assert(self:request("POST", "/session/"..session_id.."/element/"..element_id.."/click", {
   }))
   io.write(stringify_json(r), "\n")
 end
 
-function driver_commands:crwd_element_send_keys(name, element_id, text)
-  local session_id = assert(self:crwd_get_sesion_id(name))
-  local r = assert(self:crwd_request("POST", "/session/"..session_id.."/element/"..element_id.."/value", {
+function driver_commands:element_send_keys(name, element_id, text)
+  local session_id = assert(self:get_sesion_id(name))
+  local r = assert(self:request("POST", "/session/"..session_id.."/element/"..element_id.."/value", {
     text = text;
   }))
   io.write(stringify_json(r), "\n")
 end
 
-function driver_commands:crwd_source(name)
-  local session_id = assert(self:crwd_get_sesion_id(name))
-  local r = assert(self:crwd_request("GET", "/session/"..session_id.."/source"))
+function driver_commands:source(name)
+  local session_id = assert(self:get_sesion_id(name))
+  local r = assert(self:request("GET", "/session/"..session_id.."/source"))
   io.write(r.value, "\n")
 end
 
@@ -982,6 +982,8 @@ if not command_fn then
   command_fn = driver_commands[command:gsub("^d[^:]*:", "")]
   if command_fn then
     command_self = driver_class.new(config)
+  else
+    command_self = nil
   end
 end
 
@@ -990,7 +992,3 @@ if not command_fn then
 end
 
 command_fn(command_self, unpack(arg, 2))
-
--- local self = class.new(config)
--- local command = commands[arg[1]] or commands.help
--- command(self, unpack(arg, 2))
