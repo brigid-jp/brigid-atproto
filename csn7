@@ -83,8 +83,8 @@ end
 local class = {}
 local metatable = { __index = class }
 
-function class.new(config)
-  local self = setmetatable({ config = config }, metatable)
+function class.construct(config)
+  local self = { config = config }
   self.http_session = brigid.http_session {
     header = function (code, header)
       self.response.code = code
@@ -95,6 +95,10 @@ function class.new(config)
     end;
   }
   return self
+end
+
+function class.new(config)
+  return setmetatable(class.construct(config), metatable)
 end
 
 function class:debug(...)
@@ -790,7 +794,37 @@ end
 
 ----------------------------------------------------------------------
 
-function class:crwd_request(method, path, data)
+function commands:help()
+  io.write [[
+# Bluesky session
+csn7 create_session name
+csn7 refresh_session name
+csn7 delete_session name
+
+# Bluesky get
+csn7 get_record name rkey repo
+csn7 get_profile name actor
+
+# Bluesky post
+cat post.txt | csn7 make_record name
+cat post.txt | csn7 create_record name
+
+# Slack post
+cat post.txt | csn7 slack name channel username iconname
+]]
+end
+
+----------------------------------------------------------------------
+
+local driver_class = setmetatable({}, { __index = class })
+local driver_metatable = { __index = driver_class }
+local driver_commands = {}
+
+function driver_class.new(config)
+  return setmetatable(driver_class.construct(config), driver_metatable)
+end
+
+function driver_class:crwd_request(method, path, data)
   local url = self.config.crwd.url..path
   local content_type
   local content
@@ -822,11 +856,11 @@ function class:crwd_request(method, path, data)
   return result
 end
 
-function class:crwd_get_session_path(name)
+function driver_class:crwd_get_session_path(name)
   return self.config.data_dirpath.."/crwd_session-"..name..".json"
 end
 
-function class:crwd_save_session(name, session)
+function driver_class:crwd_save_session(name, session)
   local handle, message = io.open(self:crwd_get_session_path(name), "wb")
   if not handle then
     return handle, message
@@ -836,7 +870,7 @@ function class:crwd_save_session(name, session)
   return session.sessionId
 end
 
-function class:crwd_get_sesion_id(name)
+function driver_class:crwd_get_sesion_id(name)
   local session, message = read_json(self:crwd_get_session_path(name))
   if not session then
     return session, message
@@ -844,7 +878,9 @@ function class:crwd_get_sesion_id(name)
   return session.sessionId
 end
 
-function commands:crwd_new_session(name)
+----------------------------------------------------------------------
+
+function driver_commands:crwd_new_session(name)
   local session_id = self:crwd_get_sesion_id(name)
   if session_id then
     error("session exists: "..name)
@@ -861,19 +897,19 @@ function commands:crwd_new_session(name)
   io.write(stringify_json(r), "\n")
 end
 
-function commands:crwd_delete_session(name)
+function driver_commands:crwd_delete_session(name)
   local session_id = assert(self:crwd_get_sesion_id(name))
   local r = assert(self:crwd_request("DELETE", "/session/"..session_id))
   io.write(stringify_json(r), "\n")
   os.remove(self:crwd_get_session_path(name))
 end
 
-function commands:crwd_status()
+function driver_commands:crwd_status()
   local r = assert(self:crwd_request("GET", "/status"))
   io.write(stringify_json(r), "\n")
 end
 
-function commands:crwd_navigate_to(name, url)
+function driver_commands:crwd_navigate_to(name, url)
   local session_id = assert(self:crwd_get_sesion_id(name))
   local r = assert(self:crwd_request("POST", "/session/"..session_id.."/url", {
     url = url;
@@ -881,7 +917,7 @@ function commands:crwd_navigate_to(name, url)
   io.write(stringify_json(r), "\n")
 end
 
-function commands:crwd_find_element(name, using, value)
+function driver_commands:crwd_find_element(name, using, value)
   local session_id = assert(self:crwd_get_sesion_id(name))
   local r = assert(self:crwd_request("POST", "/session/"..session_id.."/element", {
     using = using;
@@ -890,7 +926,7 @@ function commands:crwd_find_element(name, using, value)
   io.write(stringify_json(r), "\n")
 end
 
-function commands:crwd_find_elements(name, using, value)
+function driver_commands:crwd_find_elements(name, using, value)
   local session_id = assert(self:crwd_get_sesion_id(name))
   local r = assert(self:crwd_request("POST", "/session/"..session_id.."/elements", {
     using = using;
@@ -902,14 +938,14 @@ end
 -- https://webdriver.io/docs/api/element/click/
 -- https://w3c.github.io/webdriver/#processing-actions
 -- x, y, buttonあたりは使いそう
-function commands:crwd_element_click(name, element_id)
+function driver_commands:crwd_element_click(name, element_id)
   local session_id = assert(self:crwd_get_sesion_id(name))
   local r = assert(self:crwd_request("POST", "/session/"..session_id.."/element/"..element_id.."/click", {
   }))
   io.write(stringify_json(r), "\n")
 end
 
-function commands:crwd_element_send_keys(name, element_id, text)
+function driver_commands:crwd_element_send_keys(name, element_id, text)
   local session_id = assert(self:crwd_get_sesion_id(name))
   local r = assert(self:crwd_request("POST", "/session/"..session_id.."/element/"..element_id.."/value", {
     text = text;
@@ -917,32 +953,10 @@ function commands:crwd_element_send_keys(name, element_id, text)
   io.write(stringify_json(r), "\n")
 end
 
-function commands:crwd_source(name)
+function driver_commands:crwd_source(name)
   local session_id = assert(self:crwd_get_sesion_id(name))
   local r = assert(self:crwd_request("GET", "/session/"..session_id.."/source"))
   io.write(r.value, "\n")
-end
-
-----------------------------------------------------------------------
-
-function commands:help()
-  io.write [[
-# Bluesky session
-csn7 create_session name
-csn7 refresh_session name
-csn7 delete_session name
-
-# Bluesky get
-csn7 get_record name rkey repo
-csn7 get_profile name actor
-
-# Bluesky post
-cat post.txt | csn7 make_record name
-cat post.txt | csn7 create_record name
-
-# Slack post
-cat post.txt | csn7 slack name channel username iconname
-]]
 end
 
 ----------------------------------------------------------------------
@@ -960,6 +974,23 @@ if not config.data_dirpath then
 end
 brigid.mkdir(config.data_dirpath)
 
-local self = class.new(config)
-local command = commands[arg[1]] or commands.help
-command(self, unpack(arg, 2))
+local command = arg[1] or ""
+local command_fn = commands[command]
+local command_self = class.new(config)
+
+if not command_fn then
+  command_fn = driver_commands[command:gsub("^d:", "")]
+  if command_fn then
+    command_self = driver_class.new(config)
+  end
+end
+
+if not command_fn then
+  command_fn = commands.help
+end
+
+command_fn(command_self, unpack(arg, 2))
+
+-- local self = class.new(config)
+-- local command = commands[arg[1]] or commands.help
+-- command(self, unpack(arg, 2))
