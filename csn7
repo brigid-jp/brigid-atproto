@@ -999,6 +999,27 @@ function driver_commands:find_elements(name, using, value)
   end
 end
 
+function driver_commands:get_attribute(name, using, value, attrname)
+  local session_id = assert(self:get_session_id(name))
+  local element_id = assert(self:find_element(session_id, using, value))
+  local r = assert(self:request("GET", "/session/"..session_id.."/element/"..element_id.."/attribute/"..attrname))
+  io.write(r.value, "\n")
+end
+
+function driver_commands:get_property(name, using, value, propname)
+  local session_id = assert(self:get_session_id(name))
+  local element_id = assert(self:find_element(session_id, using, value))
+  local r = assert(self:request("GET", "/session/"..session_id.."/element/"..element_id.."/property/"..propname))
+  io.write(r.value, "\n")
+end
+
+function driver_commands:get_text(name, using, value)
+  local session_id = assert(self:get_session_id(name))
+  local element_id = assert(self:find_element(session_id, using, value))
+  local r = assert(self:request("GET", "/session/"..session_id.."/element/"..element_id.."/text"))
+  io.write(r.value, "\n")
+end
+
 function driver_commands:click(name, using, value)
   local session_id = assert(self:get_session_id(name))
   local element_id = assert(self:find_element(session_id, using, value))
@@ -1084,6 +1105,10 @@ csn7 d:refresh name
 
 csn7 d:find_element name using value
 csn7 d:find_elements name using value
+csn7 d:get_attribute name using value attrname
+csn7 d:get_property name using value propname
+csn7 d:get_text name using value
+
 csn7 d:click name using value
 csn7 d:set_value name using value text
 csn7 d:source name
