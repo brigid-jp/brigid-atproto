@@ -868,6 +868,37 @@ function driver_class:get_session_id(name)
   return session.sessionId
 end
 
+function driver_class:get_location_strategy(using)
+  -- https://w3c.github.io/webdriver/#locator-strategies
+  local location_strategies = {
+    c = "css selector";
+    l = "link text";
+    p = "partial link text";
+    t = "tag name";
+    x = "xpath";
+  }
+  return location_strategies[using:sub(1, 1)]
+end
+
+function driver_class:find_element(session_id, using, value)
+  return self:request("POST", "/session/"..session_id.."/element", {
+    using = self:get_location_strategy(using);
+    value = value;
+  })
+end
+
+function driver_class:find_elements(session_id, using, value)
+  return self:request("POST", "/session/"..session_id.."/elements", {
+    using = self:get_location_strategy(using);
+    value = value;
+  })
+end
+
+function driver_class:get_element_id(t)
+  local k, v = next(t)
+  return v
+end
+
 ----------------------------------------------------------------------
 
 function driver_commands:new_session(name)
@@ -902,7 +933,7 @@ function driver_commands:status()
   io.write(stringify_json(r), "\n")
 end
 
-function driver_commands:navigate_to(name, url)
+function driver_commands:set_url(name, url)
   local session_id = assert(self:get_session_id(name))
   local r = assert(self:request("POST", "/session/"..session_id.."/url", {
     url = url;
@@ -910,36 +941,56 @@ function driver_commands:navigate_to(name, url)
   io.write(stringify_json(r), "\n")
 end
 
+function driver_commands:get_url(name)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:request("GET", "/session/"..session_id.."/url"))
+  io.write(stringify_json(r), "\n")
+end
+
+function driver_commands:back(name)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:request("POST", "/session/"..session_id.."/back", {}))
+  io.write(stringify_json(r), "\n")
+end
+
+function driver_commands:forward(name)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:request("POST", "/session/"..session_id.."/forward", {}))
+  io.write(stringify_json(r), "\n")
+end
+
+function driver_commands:refresh(name)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:request("POST", "/session/"..session_id.."/refresh", {}))
+  io.write(stringify_json(r), "\n")
+end
+
 function driver_commands:find_element(name, using, value)
   local session_id = assert(self:get_session_id(name))
-  local r = assert(self:request("POST", "/session/"..session_id.."/element", {
-    using = using;
-    value = value;
-  }))
+  local r = assert(self:find_element(session_id, using, value))
   io.write(stringify_json(r), "\n")
 end
 
 function driver_commands:find_elements(name, using, value)
   local session_id = assert(self:get_session_id(name))
-  local r = assert(self:request("POST", "/session/"..session_id.."/elements", {
-    using = using;
-    value = value;
-  }))
+  local r = assert(self:find_elements(session_id, using, value))
   io.write(stringify_json(r), "\n")
 end
 
--- https://webdriver.io/docs/api/element/click/
--- https://w3c.github.io/webdriver/#processing-actions
--- x, y, buttonあたりは使いそう
-function driver_commands:element_click(name, element_id)
+function driver_commands:click(name, using, value)
   local session_id = assert(self:get_session_id(name))
-  local r = assert(self:request("POST", "/session/"..session_id.."/element/"..element_id.."/click", {
-  }))
+  local r = assert(self:find_element(session_id, using, value))
+  io.write(stringify_json(r), "\n")
+  local element_id = select(2, next(r.value))
+  local r = assert(self:request("POST", "/session/"..session_id.."/element/"..element_id.."/click", {}))
   io.write(stringify_json(r), "\n")
 end
 
-function driver_commands:element_send_keys(name, element_id, text)
+function driver_commands:set_value(name, using, value, text)
   local session_id = assert(self:get_session_id(name))
+  local r = assert(self:find_element(session_id, using, value))
+  io.write(stringify_json(r), "\n")
+  local element_id = select(2, next(r.value))
   local r = assert(self:request("POST", "/session/"..session_id.."/element/"..element_id.."/value", {
     text = text;
   }))
@@ -949,6 +1000,13 @@ end
 function driver_commands:source(name)
   local session_id = assert(self:get_session_id(name))
   local r = assert(self:request("GET", "/session/"..session_id.."/source"))
+  io.write(r.value, "\n")
+end
+
+-- TODO base64をログに出すと重い
+function driver_commands:screenshot(name)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:request("GET", "/session/"..session_id.."/screenshot"))
   io.write(r.value, "\n")
 end
 
