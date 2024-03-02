@@ -1068,7 +1068,7 @@ csn7 d:refresh name
 csn7 d:find_element name using value
 csn7 d:find_elements name using value
 csn7 d:click name using value
-csn7 d:set_value name using value
+csn7 d:set_value name using value text
 csn7 d:source name
 
 csn7 d:execute name script [...]
