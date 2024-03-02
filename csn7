@@ -11,6 +11,18 @@ local unpack = table.unpack or unpack
 
 ----------------------------------------------------------------------
 
+-- 暗号学的に安全な乱数ではないが、問題ない用途である。
+local handle = io.open("/dev/urandom", "rb")
+if handle then
+  local a, b, c, d = string.byte(handle:read(4), 1, 4)
+  handle:close()
+  math.randomseed(a * 0x1000000 + b * 0x1000000 + c * 0x100 + d)
+else
+  math.randomseed(os.time())
+end
+
+----------------------------------------------------------------------
+
 -- https://www.iana.org/assignments/media-types/media-types.xhtml
 local media_types = {
   json = "application/json";
@@ -83,8 +95,8 @@ end
 local class = {}
 local metatable = { __index = class }
 
-function class.new(config)
-  local self = setmetatable({ config = config }, metatable)
+function class.construct(config)
+  local self = { config = config }
   self.http_session = brigid.http_session {
     header = function (code, header)
       self.response.code = code
@@ -95,6 +107,10 @@ function class.new(config)
     end;
   }
   return self
+end
+
+function class.new(config)
+  return setmetatable(class.construct(config), metatable)
 end
 
 function class:debug(...)
@@ -162,7 +178,9 @@ function class:request(method, url, header, data)
     self:debug "[response]"
     self:debug(self.response.code)
     self:debug(stringify_json(self.response.header))
-    self:debug(tostring(self.response.data_writer))
+    if #self.response.data_writer < 65536 then
+      self:debug(tostring(self.response.data_writer))
+    end
   end
 
   return self.response
@@ -254,9 +272,9 @@ function class:post(endpoint, authz, content_type, data, refreshed)
 end
 
 function class:get_impl(url, refreshed)
-  local response = assert(self:request("GET", url, self:make_header {
+  local response, message = self:request("GET", url, self:make_header {
     Authorization = "Bearer "..self.session.accessJwt;
-  }))
+  })
   if not response then
     return response, message
   end
@@ -769,6 +787,16 @@ function commands:slack(name, channel, username, iconname)
   local app = assert(self.config.slack.apps[name])
   local text = io.read "*a"
 
+  if username then
+    local a, groupname, b = username:match "^(.-)%%random:([^%%]*)%%(.*)$"
+    if a then
+      local group = assert(self.config.slack.groups[groupname])
+      local avator = group[math.random(#group)]
+      username = a..avator.username..b
+      iconname = avator.iconname
+    end
+  end
+
   assert(self:request("POST", slack_url.."/chat.postMessage", self:make_header({
     Authorization = "Bearer "..app.oauth_token;
   }, media_types.json), stringify_json {
@@ -790,24 +818,260 @@ end
 
 ----------------------------------------------------------------------
 
+local driver_class = setmetatable({}, { __index = class })
+local driver_metatable = { __index = driver_class }
+local driver_commands = {}
+
+function driver_class.new(config)
+  return setmetatable(driver_class.construct(config), driver_metatable)
+end
+
+function driver_class:request(method, path, data)
+  local url = self.config.driver.url..path
+  local content_type
+  local content
+  if data then
+    content_type = media_types.json
+    content = stringify_json(data)
+  end
+  local response, message = class.request(self, method, url, self:make_header({}, content_type), content)
+  if not response then
+    return response, message
+  end
+
+  local content_type = response.header["Content-Type"]
+  if not content_type or not content_type:find(media_types.json, 1, true) then
+    if response.code ~= 200 then
+      return nil, response.code
+    end
+    return tostring(response.data_writer)
+  end
+
+  local result, message = brigid.json.parse(response.data_writer)
+  if not result then
+    return result, message
+  end
+
+  if response.code ~= 200 then
+    return nil, result.value.error..": "..result.value.message
+  end
+  return result
+end
+
+function driver_class:get_session_path(name)
+  return self.config.data_dirpath.."/driver_session-"..name..".json"
+end
+
+function driver_class:get_session_id(name)
+  local session, message = read_json(self:get_session_path(name))
+  if not session then
+    return session, message
+  end
+  return session.sessionId
+end
+
+function driver_class:get_location_strategy(using)
+  -- https://w3c.github.io/webdriver/#locator-strategies
+  local location_strategies = {
+    c = "css selector";
+    l = "link text";
+    p = "partial link text";
+    t = "tag name";
+    x = "xpath";
+  }
+  return location_strategies[using:sub(1, 1)]
+end
+
+function driver_class:find_element(session_id, using, value)
+  return self:request("POST", "/session/"..session_id.."/element", {
+    using = self:get_location_strategy(using);
+    value = value;
+  })
+end
+
+function driver_class:find_elements(session_id, using, value)
+  return self:request("POST", "/session/"..session_id.."/elements", {
+    using = self:get_location_strategy(using);
+    value = value;
+  })
+end
+
+function driver_class:get_element_id(t)
+  local k, v = next(t)
+  return v
+end
+
+----------------------------------------------------------------------
+
+function driver_commands:new_session(name)
+  local session_id = self:get_session_id(name)
+  if session_id then
+    error("session exists: "..name)
+  end
+
+  local r = assert(self:request("POST", "/session", {
+    capabilities = {
+      alwaysMatch = {
+        ["goog:chromeOptions"] = self.config.driver.chrome_options;
+      };
+    };
+  }))
+  io.write(stringify_json(r), "\n")
+
+  local handle = assert(io.open(self:get_session_path(name), "wb"))
+  handle:write(stringify_json(r.value), "\n")
+  handle:close()
+end
+
+function driver_commands:delete_session(name)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:request("DELETE", "/session/"..session_id))
+  io.write(stringify_json(r), "\n")
+  os.remove(self:get_session_path(name))
+end
+
+function driver_commands:status()
+  local r = assert(self:request("GET", "/status"))
+  io.write(stringify_json(r), "\n")
+end
+
+function driver_commands:set_url(name, url)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:request("POST", "/session/"..session_id.."/url", {
+    url = url;
+  }))
+  io.write(stringify_json(r), "\n")
+end
+
+function driver_commands:get_url(name)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:request("GET", "/session/"..session_id.."/url"))
+  io.write(stringify_json(r), "\n")
+end
+
+function driver_commands:back(name)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:request("POST", "/session/"..session_id.."/back", {}))
+  io.write(stringify_json(r), "\n")
+end
+
+function driver_commands:forward(name)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:request("POST", "/session/"..session_id.."/forward", {}))
+  io.write(stringify_json(r), "\n")
+end
+
+function driver_commands:refresh(name)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:request("POST", "/session/"..session_id.."/refresh", {}))
+  io.write(stringify_json(r), "\n")
+end
+
+function driver_commands:find_element(name, using, value)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:find_element(session_id, using, value))
+  io.write(stringify_json(r), "\n")
+end
+
+function driver_commands:find_elements(name, using, value)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:find_elements(session_id, using, value))
+  io.write(stringify_json(r), "\n")
+end
+
+function driver_commands:click(name, using, value)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:find_element(session_id, using, value))
+  local element_id = select(2, next(r.value))
+  local r = assert(self:request("POST", "/session/"..session_id.."/element/"..element_id.."/click", {}))
+  io.write(stringify_json(r), "\n")
+end
+
+function driver_commands:set_value(name, using, value, text)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:find_element(session_id, using, value))
+  local element_id = select(2, next(r.value))
+  local r = assert(self:request("POST", "/session/"..session_id.."/element/"..element_id.."/value", {
+    text = text;
+  }))
+  io.write(stringify_json(r), "\n")
+end
+
+function driver_commands:source(name)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:request("GET", "/session/"..session_id.."/source"))
+  io.write(r.value, "\n")
+end
+
+function driver_commands:execute(name, script, arg, ...)
+  local session_id = assert(self:get_session_id(name))
+  if not script then
+    script = read_contents(io.stdin)
+  end
+  local args = arg and { arg, ... } or brigid.json.array()
+  local r = assert(self:request("POST", "/session/"..session_id.."/execute/sync", {
+    script = script;
+    args = args;
+  }))
+  io.write(stringify_json(r), "\n")
+end
+
+function driver_commands:screenshot(name, using, value)
+  local session_id = assert(self:get_session_id(name))
+  if using and value then
+    local r = assert(self:find_element(session_id, using, value))
+    local element_id = select(2, next(r.value))
+    local r = assert(self:request("GET", "/session/"..session_id.."/element/"..element_id.."/screenshot"))
+    io.write(r.value, "\n")
+  else
+    local r = assert(self:request("GET", "/session/"..session_id.."/screenshot"))
+    io.write(r.value, "\n")
+  end
+end
+
+----------------------------------------------------------------------
+
 function commands:help()
-  io.write [[
-# Bluesky session
+  io.write [=[
+# Bluesky
+
 csn7 create_session name
 csn7 refresh_session name
 csn7 delete_session name
 
-# Bluesky get
-csn7 get_record name rkey repo
-csn7 get_profile name actor
+csn7 get_record name rkey [repo]
+csn7 get_profile name [actor]
 
-# Bluesky post
 cat post.txt | csn7 make_record name
 cat post.txt | csn7 create_record name
 
-# Slack post
-cat post.txt | csn7 slack name channel username iconname
-]]
+# Slack
+
+cat post.txt | csn7 slack name channel [username [iconname]]
+
+# WebDriver
+
+csn7 d:new_session name
+csn7 d:delete_session name
+csn7 d:status
+
+csn7 d:set_url name url
+csn7 d:get_url name
+csn7 d:back name
+csn7 d:forward name
+csn7 d:refresh name
+
+csn7 d:find_element name using value
+csn7 d:find_elements name using value
+csn7 d:click name using value
+csn7 d:set_value name using value
+csn7 d:source name
+
+csn7 d:execute name script [...]
+cat script.js | csn7 d:execute name
+csn7 d:screenshot name
+csn7 d:screenshot name using value
+]=]
 end
 
 ----------------------------------------------------------------------
@@ -825,9 +1089,21 @@ if not config.data_dirpath then
 end
 brigid.mkdir(config.data_dirpath)
 
-local self = class.new(config)
+local command = arg[1] or ""
+local command_fn = commands[command]
+local command_self = class.new(config)
 
-----------------------------------------------------------------------
+if not command_fn then
+  command_fn = driver_commands[command:gsub("^d[^:]*:", "")]
+  if command_fn then
+    command_self = driver_class.new(config)
+  else
+    command_self = nil
+  end
+end
 
-local command = commands[arg[1]] or commands.help
-command(self, unpack(arg, 2))
+if not command_fn then
+  command_fn = commands.help
+end
+
+command_fn(command_self, unpack(arg, 2))
