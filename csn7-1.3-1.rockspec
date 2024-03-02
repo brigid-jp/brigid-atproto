@@ -1,8 +1,8 @@
 package = "csn7"
-version = "1.2-1"
+version = "1.3-1"
 source = {
-  url = "https://github.com/brigid-jp/csn7/archive/v1.2.tar.gz";
-  file = "csn7-1.2.tar.gz";
+  url = "https://github.com/brigid-jp/csn7/archive/v1.3.tar.gz";
+  file = "csn7-1.3.tar.gz";
 }
 dependencies = {
   "brigid";
