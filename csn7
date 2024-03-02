@@ -11,6 +11,18 @@ local unpack = table.unpack or unpack
 
 ----------------------------------------------------------------------
 
+-- 暗号学的に安全な乱数ではないが、問題ない用途である。
+local handle = io.open("/dev/urandom", "rb")
+if handle then
+  local a, b, c, d = string.byte(handle:read(4), 1, 4)
+  handle:close()
+  math.randomseed(a * 0x1000000 + b * 0x1000000 + c * 0x100 + d)
+else
+  math.randomseed(os.time())
+end
+
+----------------------------------------------------------------------
+
 -- https://www.iana.org/assignments/media-types/media-types.xhtml
 local media_types = {
   json = "application/json";
@@ -774,6 +786,16 @@ end
 function commands:slack(name, channel, username, iconname)
   local app = assert(self.config.slack.apps[name])
   local text = io.read "*a"
+
+  if username then
+    local a, groupname, b = username:match "^(.-)%%random:([^%%]*)%%(.*)$"
+    if a then
+      local group = assert(self.config.slack.groups[groupname])
+      local avator = group[math.random(#group)]
+      username = a..avator.username..b
+      iconname = avator.iconname
+    end
+  end
 
   assert(self:request("POST", slack_url.."/chat.postMessage", self:make_header({
     Authorization = "Bearer "..app.oauth_token;
