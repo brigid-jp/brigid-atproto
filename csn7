@@ -883,17 +883,35 @@ function driver_class:get_location_strategy(using)
 end
 
 function driver_class:find_element(session_id, using, value)
-  return self:request("POST", "/session/"..session_id.."/element", {
+  if using:find "^e" then
+    return value
+  end
+  local r, message = self:request("POST", "/session/"..session_id.."/element", {
     using = self:get_location_strategy(using);
     value = value;
   })
+  if not r then
+    return r, message
+  end
+  return select(2, next(r.value))
 end
 
 function driver_class:find_elements(session_id, using, value)
-  return self:request("POST", "/session/"..session_id.."/elements", {
+  if using:find "^e" then
+    return { value }
+  end
+  local r, message = self:request("POST", "/session/"..session_id.."/elements", {
     using = self:get_location_strategy(using);
     value = value;
   })
+  if not r then
+    return r, message
+  end
+  local result = {}
+  for i, v in ipairs(r.value) do
+    result[i] = select(2, next(v))
+  end
+  return result
 end
 
 function driver_class:get_element_id(t)
@@ -969,28 +987,28 @@ end
 
 function driver_commands:find_element(name, using, value)
   local session_id = assert(self:get_session_id(name))
-  local r = assert(self:find_element(session_id, using, value))
-  io.write(stringify_json(r), "\n")
+  local element_id = assert(self:find_element(session_id, using, value))
+  io.write(element_id, "\n")
 end
 
 function driver_commands:find_elements(name, using, value)
   local session_id = assert(self:get_session_id(name))
-  local r = assert(self:find_elements(session_id, using, value))
-  io.write(stringify_json(r), "\n")
+  local element_ids = assert(self:find_elements(session_id, using, value))
+  for i, v in ipairs(element_ids) do
+    io.write(v, "\n")
+  end
 end
 
 function driver_commands:click(name, using, value)
   local session_id = assert(self:get_session_id(name))
-  local r = assert(self:find_element(session_id, using, value))
-  local element_id = select(2, next(r.value))
+  local element_id = assert(self:find_element(session_id, using, value))
   local r = assert(self:request("POST", "/session/"..session_id.."/element/"..element_id.."/click", {}))
   io.write(stringify_json(r), "\n")
 end
 
 function driver_commands:set_value(name, using, value, text)
   local session_id = assert(self:get_session_id(name))
-  local r = assert(self:find_element(session_id, using, value))
-  local element_id = select(2, next(r.value))
+  local element_id = assert(self:find_element(session_id, using, value))
   local r = assert(self:request("POST", "/session/"..session_id.."/element/"..element_id.."/value", {
     text = text;
   }))
@@ -1019,8 +1037,7 @@ end
 function driver_commands:screenshot(name, using, value)
   local session_id = assert(self:get_session_id(name))
   if using and value then
-    local r = assert(self:find_element(session_id, using, value))
-    local element_id = select(2, next(r.value))
+    local element_id = assert(self:find_element(session_id, using, value))
     local r = assert(self:request("GET", "/session/"..session_id.."/element/"..element_id.."/screenshot"))
     io.write(r.value, "\n")
   else
