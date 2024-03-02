@@ -964,7 +964,7 @@ end
 function driver_commands:get_url(name)
   local session_id = assert(self:get_session_id(name))
   local r = assert(self:request("GET", "/session/"..session_id.."/url"))
-  io.write(stringify_json(r), "\n")
+  io.write(r.value, "\n")
 end
 
 function driver_commands:back(name)
@@ -997,6 +997,27 @@ function driver_commands:find_elements(name, using, value)
   for i, v in ipairs(element_ids) do
     io.write(v, "\n")
   end
+end
+
+function driver_commands:get_attribute(name, using, value, attrname)
+  local session_id = assert(self:get_session_id(name))
+  local element_id = assert(self:find_element(session_id, using, value))
+  local r = assert(self:request("GET", "/session/"..session_id.."/element/"..element_id.."/attribute/"..attrname))
+  io.write(r.value, "\n")
+end
+
+function driver_commands:get_property(name, using, value, propname)
+  local session_id = assert(self:get_session_id(name))
+  local element_id = assert(self:find_element(session_id, using, value))
+  local r = assert(self:request("GET", "/session/"..session_id.."/element/"..element_id.."/property/"..propname))
+  io.write(r.value, "\n")
+end
+
+function driver_commands:get_text(name, using, value)
+  local session_id = assert(self:get_session_id(name))
+  local element_id = assert(self:find_element(session_id, using, value))
+  local r = assert(self:request("GET", "/session/"..session_id.."/element/"..element_id.."/text"))
+  io.write(r.value, "\n")
 end
 
 function driver_commands:click(name, using, value)
@@ -1084,6 +1105,10 @@ csn7 d:refresh name
 
 csn7 d:find_element name using value
 csn7 d:find_elements name using value
+csn7 d:get_attribute name using value attrname
+csn7 d:get_property name using value propname
+csn7 d:get_text name using value
+
 csn7 d:click name using value
 csn7 d:set_value name using value text
 csn7 d:source name
@@ -1098,6 +1123,7 @@ csn7 d:screenshot name using value
 csn7 sleep sec
 csn7 help
 ]=]
+  os.exit(1)
 end
 
 ----------------------------------------------------------------------
@@ -1131,5 +1157,4 @@ end
 if not command_fn then
   command_fn = commands.help
 end
-
 command_fn(command_self, unpack(arg, 2))
