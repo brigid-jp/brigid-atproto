@@ -1123,6 +1123,7 @@ csn7 d:screenshot name using value
 csn7 sleep sec
 csn7 help
 ]=]
+  os.exit(1)
 end
 
 ----------------------------------------------------------------------
@@ -1156,5 +1157,4 @@ end
 if not command_fn then
   command_fn = commands.help
 end
-
 command_fn(command_self, unpack(arg, 2))
