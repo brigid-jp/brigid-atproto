@@ -1031,6 +1031,10 @@ end
 
 ----------------------------------------------------------------------
 
+function commands:sleep(sec)
+  brigid.sleep(sec * 1000000000)
+end
+
 function commands:help()
   io.write [=[
 # Bluesky
@@ -1071,6 +1075,11 @@ csn7 d:execute name script [...]
 cat script.js | csn7 d:execute name
 csn7 d:screenshot name
 csn7 d:screenshot name using value
+
+# Utilities
+
+csn7 sleep sec
+csn7 help
 ]=]
 end
 
