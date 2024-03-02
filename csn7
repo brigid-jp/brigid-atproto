@@ -979,7 +979,7 @@ local command_fn = commands[command]
 local command_self = class.new(config)
 
 if not command_fn then
-  command_fn = driver_commands[command:gsub("^d:", "")]
+  command_fn = driver_commands[command:gsub("^d[^:]*:", "")]
   if command_fn then
     command_self = driver_class.new(config)
   end
