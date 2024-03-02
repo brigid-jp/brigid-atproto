@@ -860,17 +860,7 @@ function driver_class:get_session_path(name)
   return self.config.data_dirpath.."/driver_session-"..name..".json"
 end
 
-function driver_class:save_session(name, session)
-  local handle, message = io.open(self:get_session_path(name), "wb")
-  if not handle then
-    return handle, message
-  end
-  handle:write(stringify_json(session), "\n")
-  handle:close()
-  return session.sessionId
-end
-
-function driver_class:get_sesion_id(name)
+function driver_class:get_session_id(name)
   local session, message = read_json(self:get_session_path(name))
   if not session then
     return session, message
@@ -881,7 +871,7 @@ end
 ----------------------------------------------------------------------
 
 function driver_commands:new_session(name)
-  local session_id = self:get_sesion_id(name)
+  local session_id = self:get_session_id(name)
   if session_id then
     error("session exists: "..name)
   end
@@ -893,12 +883,15 @@ function driver_commands:new_session(name)
       };
     };
   }))
-  assert(self:save_session(name, r.value))
   io.write(stringify_json(r), "\n")
+
+  local handle = assert(io.open(self:get_session_path(name), "wb"))
+  handle:write(stringify_json(r.value), "\n")
+  handle:close()
 end
 
 function driver_commands:delete_session(name)
-  local session_id = assert(self:get_sesion_id(name))
+  local session_id = assert(self:get_session_id(name))
   local r = assert(self:request("DELETE", "/session/"..session_id))
   io.write(stringify_json(r), "\n")
   os.remove(self:get_session_path(name))
@@ -910,7 +903,7 @@ function driver_commands:status()
 end
 
 function driver_commands:navigate_to(name, url)
-  local session_id = assert(self:get_sesion_id(name))
+  local session_id = assert(self:get_session_id(name))
   local r = assert(self:request("POST", "/session/"..session_id.."/url", {
     url = url;
   }))
@@ -918,7 +911,7 @@ function driver_commands:navigate_to(name, url)
 end
 
 function driver_commands:find_element(name, using, value)
-  local session_id = assert(self:get_sesion_id(name))
+  local session_id = assert(self:get_session_id(name))
   local r = assert(self:request("POST", "/session/"..session_id.."/element", {
     using = using;
     value = value;
@@ -927,7 +920,7 @@ function driver_commands:find_element(name, using, value)
 end
 
 function driver_commands:find_elements(name, using, value)
-  local session_id = assert(self:get_sesion_id(name))
+  local session_id = assert(self:get_session_id(name))
   local r = assert(self:request("POST", "/session/"..session_id.."/elements", {
     using = using;
     value = value;
@@ -939,14 +932,14 @@ end
 -- https://w3c.github.io/webdriver/#processing-actions
 -- x, y, buttonあたりは使いそう
 function driver_commands:element_click(name, element_id)
-  local session_id = assert(self:get_sesion_id(name))
+  local session_id = assert(self:get_session_id(name))
   local r = assert(self:request("POST", "/session/"..session_id.."/element/"..element_id.."/click", {
   }))
   io.write(stringify_json(r), "\n")
 end
 
 function driver_commands:element_send_keys(name, element_id, text)
-  local session_id = assert(self:get_sesion_id(name))
+  local session_id = assert(self:get_session_id(name))
   local r = assert(self:request("POST", "/session/"..session_id.."/element/"..element_id.."/value", {
     text = text;
   }))
@@ -954,7 +947,7 @@ function driver_commands:element_send_keys(name, element_id, text)
 end
 
 function driver_commands:source(name)
-  local session_id = assert(self:get_sesion_id(name))
+  local session_id = assert(self:get_session_id(name))
   local r = assert(self:request("GET", "/session/"..session_id.."/source"))
   io.write(r.value, "\n")
 end
