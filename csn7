@@ -1003,6 +1003,19 @@ function driver_commands:source(name)
   io.write(r.value, "\n")
 end
 
+function driver_commands:execute(name, script, arg, ...)
+  local session_id = assert(self:get_session_id(name))
+  if not script then
+    script = read_contents(io.stdin)
+  end
+  local args = arg and { arg, ... } or brigid.json.array()
+  local r = assert(self:request("POST", "/session/"..session_id.."/execute/sync", {
+    script = script;
+    args = args;
+  }))
+  io.write(stringify_json(r), "\n")
+end
+
 function driver_commands:screenshot(name, using, value)
   local session_id = assert(self:get_session_id(name))
   if using and value then
