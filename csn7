@@ -4,6 +4,10 @@
 -- This software is released under the MIT License.
 -- https://opensource.org/licenses/mit-license.php
 
+local csn7_version = "1.5"
+
+----------------------------------------------------------------------
+
 local brigid = require "brigid"
 brigid.dlopen_self()
 
@@ -22,6 +26,8 @@ else
 end
 
 ----------------------------------------------------------------------
+
+local csn7_ua = "csn7/"..csn7_version.." brigid/"..brigid.get_version()
 
 -- https://www.iana.org/assignments/media-types/media-types.xhtml
 local media_types = {
@@ -142,7 +148,7 @@ end
 
 function class:make_header(source, content_type)
   local result = {
-    ["User-Agent"] = self.config.ua;
+    ["User-Agent"] = self.config.ua or csn7_ua;
     ["Content-Type"] = content_type;
   }
   for k, v in pairs(source) do
