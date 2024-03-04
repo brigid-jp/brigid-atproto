@@ -225,8 +225,8 @@ function class:post(endpoint, authz, content_type, data, refreshed)
     return response, message
   end
 
-  local content_type = response.header["Content-Type"]
-  if not content_type or not content_type:find(media_types.json, 1, true) then
+  local response_content_type = response.header["Content-Type"]
+  if not response_content_type or not response_content_type:find(media_types.json, 1, true) then
     if response.code ~= 200 then
       return nil, response.code
     end
@@ -769,7 +769,7 @@ function commands:create_record(name)
   if images then
     for i, v in ipairs(images) do
       local blob = assert(self:upload_blob(v.image.content_type, v.image.data))
-      v.image = blob.blob;
+      v.image = blob.blob
     end
   end
 
