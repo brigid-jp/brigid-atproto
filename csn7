@@ -35,6 +35,7 @@ local media_types = {
 
 local bsky_url = "https://bsky.social/xrpc"
 local slack_url = "https://slack.com/api"
+local ai_novelist_url = "https://api.tringpt.com/api"
 
 ----------------------------------------------------------------------
 
@@ -1065,6 +1066,37 @@ function driver_commands:screenshot(name, using, value)
     local r = assert(self:request("GET", "/session/"..session_id.."/screenshot"))
     io.write(r.value, "\n")
   end
+end
+
+----------------------------------------------------------------------
+
+commands["ai-novelist"] = function (self, name, length, model)
+  local text = io.read "*a"
+  if not model then
+    model = "supertrin_highpres"
+  end
+  if not length then
+    length = 95
+  end
+  if not name then
+    name = "novels"
+  end
+
+  local request = {
+    text = text;
+    length = length;
+    model = model;
+  }
+  for k, v in pairs(assert(self.config["ai-novelist"].options[name])) do
+    request[k] = v
+  end
+
+  local response = assert(self:request("POST", ai_novelist_url, self:make_header({
+    Authorization = "Bearer "..self.config["ai-novelist"].auth_key;
+  }, media_types.json), stringify_json(request)))
+
+  local r = assert(brigid.json.parse(response.data_writer))
+  io.write(text, table.concat(r.data), "\n")
 end
 
 ----------------------------------------------------------------------
