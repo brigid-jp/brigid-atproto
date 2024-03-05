@@ -4,6 +4,10 @@
 -- This software is released under the MIT License.
 -- https://opensource.org/licenses/mit-license.php
 
+local csn7_version = "1.6"
+
+----------------------------------------------------------------------
+
 local brigid = require "brigid"
 brigid.dlopen_self()
 
@@ -23,10 +27,13 @@ end
 
 ----------------------------------------------------------------------
 
+local csn7_ua = "csn7/"..csn7_version.." brigid/"..brigid.get_version()
+
 -- https://www.iana.org/assignments/media-types/media-types.xhtml
 local media_types = {
   json = "application/json";
   urlencoded = "application/x-www-form-urlencoded";
+  multipart = "multipart/form-data";
   jpg = "image/jpeg";
   jpeg = "image/jpeg";
   png = "image/png";
@@ -35,6 +42,24 @@ local media_types = {
 
 local bsky_url = "https://bsky.social/xrpc"
 local slack_url = "https://slack.com/api"
+local ai_novelist_url = "https://api.tringpt.com/api"
+
+local boundary_table = {}
+
+local a, b = ("09"):byte(1, 2)
+for byte = a, b do
+  boundary_table[#boundary_table + 1] = string.char(byte)
+end
+
+local a, b = ("AZ"):byte(1, 2)
+for byte = a, b do
+  boundary_table[#boundary_table + 1] = string.char(byte)
+end
+
+local a, b = ("az"):byte(1, 2)
+for byte = a, b do
+  boundary_table[#boundary_table + 1] = string.char(byte)
+end
 
 ----------------------------------------------------------------------
 
@@ -141,7 +166,7 @@ end
 
 function class:make_header(source, content_type)
   local result = {
-    ["User-Agent"] = self.config.ua;
+    ["User-Agent"] = self.config.ua or csn7_ua;
     ["Content-Type"] = content_type;
   }
   for k, v in pairs(source) do
@@ -185,6 +210,83 @@ function class:request(method, url, header, data)
 
   return self.response
 end
+
+function class:open_multipart()
+  local boundary = {}
+  for i = 1, 60 do
+    boundary[i] = boundary_table[math.random(#boundary_table)]
+  end
+
+  return {
+    boundary = "----"..table.concat(boundary);
+    data_writer = brigid.data_writer();
+  }
+end
+
+function class:add_part(that, name, value)
+  that.data_writer
+    :write "--"
+    :write(that.boundary)
+    :write "\r\n"
+    :write "Content-Disposition: form-data; name=\""
+    :write(name)
+    :write "\""
+    :write "\r\n"
+    :write "\r\n"
+    :write(value)
+    :write "\r\n"
+  return self
+end
+
+function class:add_part_file(that, name, path)
+  local data, message = read_contents(path)
+  if not data then
+    return data, message
+  end
+
+  local filename = path:match "([^\\/]+)[\\/]*$"
+  local suffix = path:match "%.([^.]+)$"
+  local content_type = media_types[suffix]
+
+  that.data_writer
+    :write "--"
+    :write(that.boundary)
+    :write "\r\n"
+    :write "Content-Disposition: form-data; name=\""
+    :write(name)
+    :write "\""
+  if filename then
+    that.data_writer
+      :write "; filename=\""
+      :write(filename)
+      :write "\""
+  end
+  that.data_writer
+    :write "\r\n"
+  if content_type then
+    that.data_writer
+      :write "Content-Type: "
+      :write(content_type)
+      :write "\r\n"
+  end
+  that.data_writer
+    :write "\r\n"
+    :write(data)
+    :write "\r\n"
+
+  return self
+end
+
+function class:close_multipart(that)
+  that.data_writer
+    :write "--"
+    :write(that.boundary)
+    :write "--"
+    :write "\r\n"
+  return self
+end
+
+----------------------------------------------------------------------
 
 function class:get_session_path(name)
   return self.config.data_dirpath.."/session-"..name..".json"
@@ -816,6 +918,25 @@ function commands:slack(name, channel, username, iconname)
   }))
 end
 
+function commands:slack_upload(name, channel, path, initial_comment)
+  local app = assert(self.config.slack.apps[name])
+
+  local multipart = self:open_multipart()
+  assert(self:add_part(multipart, "channels", channel))
+  assert(self:add_part_file(multipart, "file", path))
+  if initial_comment then
+    assert(self:add_part(multipart, "initial_comment", initial_comment))
+  end
+  assert(self:close_multipart(multipart))
+
+  local response = assert(self:request("POST", slack_url.."/files.upload", self:make_header({
+    Authorization = "Bearer "..app.oauth_token;
+  }, media_types.multipart.."; boundary="..multipart.boundary), multipart.data_writer))
+
+  local r = assert(brigid.json.parse(response.data_writer))
+  io.write(stringify_json(r), "\n")
+end
+
 ----------------------------------------------------------------------
 
 local driver_class = setmetatable({}, { __index = class })
@@ -1065,6 +1186,37 @@ function driver_commands:screenshot(name, using, value)
     local r = assert(self:request("GET", "/session/"..session_id.."/screenshot"))
     io.write(r.value, "\n")
   end
+end
+
+----------------------------------------------------------------------
+
+commands["ai-novelist"] = function (self, name, length, model)
+  local text = io.read "*a"
+  if not model then
+    model = "supertrin_highpres"
+  end
+  if not length then
+    length = 95
+  end
+  if not name then
+    name = "novels"
+  end
+
+  local request = {
+    text = text;
+    length = length;
+    model = model;
+  }
+  for k, v in pairs(assert(self.config["ai-novelist"].options[name])) do
+    request[k] = v
+  end
+
+  local response = assert(self:request("POST", ai_novelist_url, self:make_header({
+    Authorization = "Bearer "..self.config["ai-novelist"].auth_key;
+  }, media_types.json), stringify_json(request)))
+
+  local r = assert(brigid.json.parse(response.data_writer))
+  io.write(text, table.concat(r.data), "\n")
 end
 
 ----------------------------------------------------------------------
