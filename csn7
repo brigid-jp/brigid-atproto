@@ -841,6 +841,24 @@ function commands:get_profile(name, actor)
   io.write(stringify_json(r), "\n")
 end
 
+function commands:get_followers(name, actor)
+  assert(self:load_session(name))
+  if not actor then
+    actor = self.config.bsky.credentials[name].identifier
+  end
+  local r = assert(self:get("app.bsky.graph.getFollowers", { actor = actor }))
+  io.write(stringify_json(r), "\n")
+end
+
+function commands:get_follows(name, actor)
+  assert(self:load_session(name))
+  if not actor then
+    actor = self.config.bsky.credentials[name].identifier
+  end
+  local r = assert(self:get("app.bsky.graph.getFollows", { actor = actor }))
+  io.write(stringify_json(r), "\n")
+end
+
 ----------------------------------------------------------------------
 
 function commands:make_record(name)
@@ -1235,6 +1253,8 @@ csn7 delete_session name
 
 csn7 get_record name rkey [repo]
 csn7 get_profile name [actor]
+csn7 get_followers name [actor]
+csn7 get_follows name [actor]
 
 cat post.txt | csn7 make_record name
 cat post.txt | csn7 create_record name
