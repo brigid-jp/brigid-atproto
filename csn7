@@ -1242,6 +1242,7 @@ cat post.txt | csn7 create_record name
 # Slack
 
 cat post.txt | csn7 slack name channel [username [iconname]]
+csn7 slack_upload name channel path [initial_comment]
 
 # WebDriver
 
