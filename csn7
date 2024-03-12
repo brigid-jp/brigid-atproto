@@ -4,7 +4,7 @@
 -- This software is released under the MIT License.
 -- https://opensource.org/licenses/mit-license.php
 
-local csn7_version = "1.6"
+local csn7_version = "1.7"
 
 ----------------------------------------------------------------------
 
@@ -150,11 +150,9 @@ function class:debug(...)
     end
 
     local out = self.debug_handle
+    out:write(os.date "[%Y-%m-%d %H:%M:%S]")
     for i, v in ipairs {...} do
-      if i > 1 then
-        out:write "\t"
-      end
-      out:write(tostring(v))
+      out:write("\t", tostring(v))
     end
     out:write "\n"
   end
@@ -184,7 +182,7 @@ function class:request(method, url, header, data)
     self:debug(stringify_json(header))
 
     local content_type = header["Content-Type"]
-    if content_type and not content_type:find "image/" then
+    if content_type and not content_type:find "image/" and not content_type:find "multipart/form%-data" then
       self:debug(tostring(data))
     end
   end
@@ -841,6 +839,54 @@ function commands:get_profile(name, actor)
   io.write(stringify_json(r), "\n")
 end
 
+function commands:get_followers(name, actor)
+  assert(self:load_session(name))
+  if not actor then
+    actor = self.config.bsky.credentials[name].identifier
+  end
+
+  local r = {}
+  local followers = brigid.json.array()
+
+  repeat
+    r = assert(self:get("app.bsky.graph.getFollowers", {
+      actor = actor;
+      cursor = r.cursor;
+    }))
+
+    for _, follower in ipairs(r.followers) do
+      followers[#followers + 1] = follower
+    end
+  until not r.cursor
+
+  r.followers = followers
+  io.write(stringify_json(r), "\n")
+end
+
+function commands:get_follows(name, actor)
+  assert(self:load_session(name))
+  if not actor then
+    actor = self.config.bsky.credentials[name].identifier
+  end
+
+  local r = {}
+  local follows = brigid.json.array()
+
+  repeat
+    r = assert(self:get("app.bsky.graph.getFollows", {
+      actor = actor;
+      cursor = r.cursor;
+    }))
+
+    for _, follow in ipairs(r.follows) do
+      follows[#follows + 1] = follow
+    end
+  until not r.cursor
+
+  r.follows = follows
+  io.write(stringify_json(r), "\n")
+end
+
 ----------------------------------------------------------------------
 
 function commands:make_record(name)
@@ -1235,6 +1281,8 @@ csn7 delete_session name
 
 csn7 get_record name rkey [repo]
 csn7 get_profile name [actor]
+csn7 get_followers name [actor]
+csn7 get_follows name [actor]
 
 cat post.txt | csn7 make_record name
 cat post.txt | csn7 create_record name
@@ -1242,6 +1290,7 @@ cat post.txt | csn7 create_record name
 # Slack
 
 cat post.txt | csn7 slack name channel [username [iconname]]
+csn7 slack_upload name channel path [initial_comment]
 
 # WebDriver
 
