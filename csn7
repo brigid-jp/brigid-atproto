@@ -844,7 +844,22 @@ function commands:get_followers(name, actor)
   if not actor then
     actor = self.config.bsky.credentials[name].identifier
   end
-  local r = assert(self:get("app.bsky.graph.getFollowers", { actor = actor }))
+
+  local r = {}
+  local followers = brigid.json.array()
+
+  repeat
+    r = assert(self:get("app.bsky.graph.getFollowers", {
+      actor = actor;
+      cursor = r.cursor;
+    }))
+
+    for _, follower in ipairs(r.followers) do
+      followers[#followers + 1] = follower
+    end
+  until not r.cursor
+
+  r.followers = followers
   io.write(stringify_json(r), "\n")
 end
 
