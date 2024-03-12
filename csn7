@@ -150,11 +150,9 @@ function class:debug(...)
     end
 
     local out = self.debug_handle
+    out:write(os.date "[%Y-%m-%d %H:%M:%S]")
     for i, v in ipairs {...} do
-      if i > 1 then
-        out:write "\t"
-      end
-      out:write(tostring(v))
+      out:write("\t", tostring(v))
     end
     out:write "\n"
   end
@@ -184,7 +182,7 @@ function class:request(method, url, header, data)
     self:debug(stringify_json(header))
 
     local content_type = header["Content-Type"]
-    if content_type and not content_type:find "image/" then
+    if content_type and not content_type:find "image/" and not content_type:find "multipart/form%-data" then
       self:debug(tostring(data))
     end
   end
