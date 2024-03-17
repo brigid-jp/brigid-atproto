@@ -1271,6 +1271,14 @@ function commands:sleep(sec)
   brigid.sleep(sec * 1000000000)
 end
 
+function commands:info()
+  io.write(stringify_json {
+    program = arg[0];
+    version = csn7_version;
+    user_agent = csn7_ua;
+  }, "\n")
+end
+
 function commands:help()
   io.write [=[
 # Bluesky
@@ -1322,6 +1330,7 @@ csn7 d:screenshot name using value
 # Utilities
 
 csn7 sleep sec
+csn7 info
 csn7 help
 ]=]
   os.exit(1)
