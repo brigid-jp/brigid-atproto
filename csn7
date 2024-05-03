@@ -4,7 +4,7 @@
 -- This software is released under the MIT License.
 -- https://opensource.org/licenses/mit-license.php
 
-local csn7_version = "1.8"
+local csn7_version = "1.9"
 
 ----------------------------------------------------------------------
 
@@ -34,6 +34,7 @@ local media_types = {
   json = "application/json";
   urlencoded = "application/x-www-form-urlencoded";
   multipart = "multipart/form-data";
+  octet_stream = "application/octet-stream";
   jpg = "image/jpeg";
   jpeg = "image/jpeg";
   png = "image/png";
@@ -983,6 +984,57 @@ function commands:slack_upload(name, channel, path, initial_comment)
   io.write(stringify_json(r), "\n")
 end
 
+function commands:slack_upload_v2(name, channel_id, path, initial_comment)
+  local app = assert(self.config.slack.apps[name])
+
+  local contents = assert(read_contents(path))
+
+  local filename = assert(path:match "([^\\/]+)[\\/]*$")
+  local suffix = path:match "%.([^.]+)$"
+  local content_type = media_types[suffix]
+  if not content_type then
+    content_type = media_types.octet_stream
+  end
+
+  local data_writer = brigid.data_writer()
+    :write_urlencoded "filename"
+    :write "="
+    :write_urlencoded(filename)
+    :write "&"
+    :write_urlencoded "length"
+    :write "="
+    :write_urlencoded(#contents)
+
+  local response = assert(self:request("POST", slack_url.."/files.getUploadURLExternal", self:make_header({
+    Authorization = "Bearer "..app.oauth_token;
+  }, media_types.urlencoded), tostring(data_writer)))
+
+  local r = assert(brigid.json.parse(response.data_writer))
+  io.write(stringify_json(r), "\n")
+
+  assert(response.code == 200)
+
+  local response = assert(self:request("POST", assert(r.upload_url), self:make_header({
+    Authorization = "Bearer "..app.oauth_token;
+  }, content_type), contents))
+
+  -- 応答はtext/plainだった。
+  assert(response.code == 200)
+
+  local response = assert(self:request("POST", slack_url.."/files.completeUploadExternal", self:make_header({
+    Authorization = "Bearer "..app.oauth_token;
+  }, media_types.json), stringify_json {
+    files = { { id = assert(r.file_id) } };
+    channel_id = channel_id;
+    initial_comment = initial_comment;
+  }))
+
+  local r = assert(brigid.json.parse(response.data_writer))
+  io.write(stringify_json(r), "\n")
+
+  assert(response.code == 200)
+end
+
 ----------------------------------------------------------------------
 
 local driver_class = setmetatable({}, { __index = class })
@@ -1299,6 +1351,7 @@ cat post.txt | csn7 create_record name
 
 cat post.txt | csn7 slack name channel [username [iconname]]
 csn7 slack_upload name channel path [initial_comment]
+csn7 slack_upload_v2 name channel_id path [initial_comment]
 
 # WebDriver
 
