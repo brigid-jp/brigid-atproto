@@ -4,7 +4,7 @@
 -- This software is released under the MIT License.
 -- https://opensource.org/licenses/mit-license.php
 
-local csn7_version = "1.9"
+local csn7_version = "1.10"
 
 ----------------------------------------------------------------------
 
@@ -1140,16 +1140,23 @@ end
 
 ----------------------------------------------------------------------
 
-function driver_commands:new_session(name)
+function driver_commands:new_session(name, chrome_options_key)
   local session_id = self:get_session_id(name)
   if session_id then
     error("session exists: "..name)
   end
 
+  local chrome_options
+  if chrome_options_key then
+    chrome_options = self.config.driver.chrome_options_map[chrome_options_key]
+  else
+    chrome_options = self.config.driver.chrome_options
+  end
+
   local r = assert(self:request("POST", "/session", {
     capabilities = {
       alwaysMatch = {
-        ["goog:chromeOptions"] = self.config.driver.chrome_options;
+        ["goog:chromeOptions"] = chrome_options;
       };
     };
   }))
@@ -1355,7 +1362,7 @@ csn7 slack_upload_v2 name channel_id path [initial_comment]
 
 # WebDriver
 
-csn7 d:new_session name
+csn7 d:new_session name [chrome_options_key]
 csn7 d:delete_session name
 csn7 d:status
 
