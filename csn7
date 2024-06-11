@@ -1140,16 +1140,23 @@ end
 
 ----------------------------------------------------------------------
 
-function driver_commands:new_session(name)
+function driver_commands:new_session(name, chrome_options_key)
   local session_id = self:get_session_id(name)
   if session_id then
     error("session exists: "..name)
   end
 
+  local chrome_options
+  if chrome_options_key then
+    chrome_options = self.config.driver.chrome_options_map[chrome_options_key]
+  else
+    chrome_options = self.config.driver.chrome_options
+  end
+
   local r = assert(self:request("POST", "/session", {
     capabilities = {
       alwaysMatch = {
-        ["goog:chromeOptions"] = self.config.driver.chrome_options;
+        ["goog:chromeOptions"] = chrome_options;
       };
     };
   }))
