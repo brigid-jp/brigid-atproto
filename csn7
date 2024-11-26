@@ -4,7 +4,7 @@
 -- This software is released under the MIT License.
 -- https://opensource.org/licenses/mit-license.php
 
-local csn7_version = "1.10"
+local csn7_version = "1.11"
 
 ----------------------------------------------------------------------
 
@@ -1293,6 +1293,33 @@ function driver_commands:screenshot(name, using, value)
   end
 end
 
+function driver_commands:get_cookie(name, key)
+  local session_id = assert(self:get_session_id(name))
+  if key then
+    local data_writer = brigid.data_writer()
+      :write "/session/"
+      :write(session_id)
+      :write "/cookie/"
+      :write_urlencoded(key)
+    local r = assert(self:request("GET", tostring(data_writer)))
+    io.write(stringify_json(r.value), "\n")
+  else
+    local r = assert(self:request("GET", "/session/"..session_id.."/cookie"))
+    io.write(stringify_json(r.value), "\n")
+  end
+end
+
+function driver_commands:add_cookie(name, key, value)
+  local session_id = assert(self:get_session_id(name))
+  local r = assert(self:request("POST", "/session/"..session_id.."/cookie", {
+    cookie = {
+      name = key;
+      value = value;
+    }
+  }))
+  io.write(stringify_json(r), "\n")
+end
+
 ----------------------------------------------------------------------
 
 commands["ai-novelist"] = function (self, name, length, model)
@@ -1386,6 +1413,9 @@ csn7 d:execute name script [...]
 cat script.js | csn7 d:execute name
 csn7 d:screenshot name
 csn7 d:screenshot name using value
+
+csn7 d:get_cookie name key
+csn7 d:add_cookie name key value
 
 # Utilities
 
