@@ -4,7 +4,7 @@
 -- This software is released under the MIT License.
 -- https://opensource.org/licenses/mit-license.php
 
-local csn7_version = "1.12"
+local csn7_version = "1.13"
 
 ----------------------------------------------------------------------
 
@@ -1047,6 +1047,8 @@ end
 
 function driver_class:request(method, path, data)
   local url = self.config.driver.url..path
+  local ignore_timeout = self.config.driver.ignore_timeout
+
   local content_type
   local content
   if data then
@@ -1071,9 +1073,14 @@ function driver_class:request(method, path, data)
     return result, message
   end
 
-  if response.code ~= 200 then
+  if self.config.driver.ignore_timeout and response.code == 500 and result.value.error == "timeout" then
+    -- ChromeDriverがタイムアウトした場合にエラーとしない。
+    self:debug "ignore_timeout"
+    return result
+  elseif response.code ~= 200 then
     return nil, result.value.error..": "..result.value.message
   end
+
   return result
 end
 
